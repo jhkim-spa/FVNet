@@ -31,9 +31,9 @@ class FVNet(SingleStage3DDetector):
     def extract_feat(self, fv):
 
         fv = torch.stack(fv)
-        x = self.backbone(fv)
+        feats = self.backbone(fv)
         if self.with_neck:
-            x = self.neck(x)
+            feats = self.neck(feats)
 
         valid_coords = dict()
         valid_coords_2d = torch.nonzero(fv[:, -1, :, :])
@@ -46,7 +46,45 @@ class FVNet(SingleStage3DDetector):
         valid_coords['2d'] = valid_coords_2d
         valid_coords['3d'] = valid_coords_3d
 
-        return x, valid_coords
+        batch_size = len(fv)
+        device = fv[0].device
+        mlvl_valid_coords = []
+        featmap_sizes = [featmap.size()[-2:] for featmap in feats]
+        for i in range(len(feats)):
+            featmap_size = featmap_sizes[i]
+            h_des = featmap_size[0]
+            w_des = featmap_size[1]
+            h_scale = h_des / fv.shape[2]
+            w_scale = w_des / fv.shape[3]
+
+            if (w_scale == 1. and h_scale == 1.):
+                mlvl_valid_coords.append(valid_coords)
+            else:
+                fv_src = fv
+                fv_des = torch.zeros((batch_size, fv_src.shape[1],
+                                      h_des, w_des)).to(device)
+                idx_src = torch.nonzero(fv_src[:, -1, :, :], as_tuple=True)
+                idx_des = list()
+                idx_des.append(idx_src[0])
+                idx_des.append((h_scale * idx_src[1]).to(torch.long))
+                idx_des.append((w_scale * idx_src[2]).to(torch.long))
+                fv_des[idx_des[0], :, idx_des[1], idx_des[2]] = \
+                    fv_src[idx_src[0], :, idx_src[1], idx_src[2]]
+                
+                res_valid_coords = dict()
+                res_valid_coords_2d = torch.nonzero(fv_des[:, -1, :, :])
+                res_valid_coords_3d = fv_des[res_valid_coords_2d[:, 0],
+                                             :3,
+                                             res_valid_coords_2d[:, 1],
+                                             res_valid_coords_2d[:, 2]]
+                batch_idx = res_valid_coords_2d[:, 0].reshape(-1, 1)
+                res_valid_coords_3d = torch.cat((batch_idx, res_valid_coords_3d),
+                                                 dim=1)
+                res_valid_coords['2d'] = res_valid_coords_2d
+                res_valid_coords['3d'] = res_valid_coords_3d
+                mlvl_valid_coords.append(res_valid_coords)
+
+        return feats, mlvl_valid_coords
 
     def forward_train(self,
                       fv,

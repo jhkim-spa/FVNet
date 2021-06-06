@@ -107,21 +107,7 @@ class AnchorTrainMixin(object):
                                 label_channels=1,
                                 num_classes=1,
                                 sampling=True):
-        """Compute targets of anchors in single batch.
 
-        Args:
-            anchors (torch.Tensor): Concatenated multi-level anchor.
-            gt_bboxes (:obj:`BaseInstance3DBoxes`): Gt bboxes.
-            gt_bboxes_ignore (torch.Tensor): Ignored gt bboxes.
-            gt_labels (torch.Tensor): Gt class labels.
-            input_meta (dict): Meta info of each image.
-            label_channels (int): The channel of labels.
-            num_classes (int): The number of classes.
-            sampling (bool): Whether to sample anchors.
-
-        Returns:
-            tuple[torch.Tensor]: Anchor targets.
-        """
         if isinstance(self.bbox_assigner,
                       list) and (not isinstance(anchors, list)):
             feat_size = anchors.size(0) * anchors.size(1) * anchors.size(2)

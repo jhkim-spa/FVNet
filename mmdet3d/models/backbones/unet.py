@@ -98,18 +98,26 @@ class UNet(nn.Module):
         self.up4 = Up(128, 64, bilinear)
         self.outc = OutConv(64, n_classes)
 
+        self.outc1 = nn.Conv2d(256, 64, 1)
+        self.outc2 = nn.Conv2d(128, 64, 1)
+
     def forward(self, x):
-        outs = []
         x1 = self.inc(x)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
         x4 = self.down3(x3)
         x5 = self.down4(x4)
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
-        outs.append(x)
+        x11 = self.up1(x5, x4)
+        x22 = self.up2(x11, x3)
+        x33 = self.up3(x22, x2)
+        x44 = self.up4(x33, x1)
+
+        out1 = self.outc1(x11)
+        out2 = self.outc2(x22)
+        out3 = x33
+        out4 = x44
+
+        outs = [out1, out2, out3, out4]
         return outs
 
     def init_weights(self, pretrained=None):

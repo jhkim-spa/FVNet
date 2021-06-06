@@ -195,7 +195,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         
         device = cls_scores[0].device
-        anchor_list = self.get_anchors(valid_coords['3d'], self.anchor_cfg,
+        anchor_list = self.get_anchors(valid_coords, self.anchor_cfg,
             featmap_sizes, device=device)
         label_channels = self.cls_out_channels if self.use_sigmoid_cls else 1
         cls_reg_targets = self.anchor_target_3d(
@@ -216,7 +216,6 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         num_total_samples = (
             num_total_pos + num_total_neg if self.sampling else num_total_pos)
 
-        valid_coords = [valid_coords]
         # num_total_samples = None
         losses_cls, losses_bbox, losses_dir = multi_apply(
             self.loss_single,
@@ -262,7 +261,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]
         device = cls_scores[0].device
 
-        mlvl_anchors = self.get_anchors(valid_coords['3d'], self.anchor_cfg,
+        mlvl_anchors = self.get_anchors(valid_coords, self.anchor_cfg,
             featmap_sizes, device=device)[0]
         mlvl_anchors = [
             anchor.reshape(-1, self.box_code_size) for anchor in mlvl_anchors
@@ -289,7 +288,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         return result_list
 
     def get_bboxes_single(self,
-                          valid_coords,
+                          mlvl_valid_coords,
                           cls_scores,
                           bbox_preds,
                           dir_cls_preds,
@@ -322,8 +321,9 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         mlvl_bboxes = []
         mlvl_scores = []
         mlvl_dir_scores = []
-        for cls_score, bbox_pred, dir_cls_pred, anchors in zip(
-                cls_scores, bbox_preds, dir_cls_preds, mlvl_anchors):
+        for cls_score, bbox_pred, dir_cls_pred, anchors, valid_coords in zip(
+                cls_scores, bbox_preds, dir_cls_preds, mlvl_anchors,
+                mlvl_valid_coords):
             assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
             assert cls_score.size()[-2:] == dir_cls_pred.size()[-2:]
             valid_coords_2d = valid_coords['2d'][:, 1:]
@@ -386,30 +386,31 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         bboxes = input_meta['box_type_3d'](bboxes, box_dim=self.box_code_size)
         return bboxes, scores, labels
 
-    def get_anchors(self, centers, anchor_cfg, featmap_sizes, device):
+    def get_anchors(self, mlvl_valid_coords, anchor_cfg, featmap_sizes, device):
         # multi scale 구현하기
         size = anchor_cfg['size']
-        batch_idx = centers[:, 0]
-        batch_size = int(batch_idx[-1]) + 1
-        centers = centers[:, 1:]
-        centers[:, 2] -= size[2] / 2
-        centers = [centers[batch_idx == i] for i in range(batch_size)]
         rotation = anchor_cfg['rotation']
+        batch_size = mlvl_valid_coords[0]['2d'][:, 0][-1].item() + 1
 
-        anchor_list = []
+        anchors_batch = []
         for i in range(batch_size):
-            anchors = []
+            anchors_mlvl = []
             for j in range(len(featmap_sizes)):
-                num_points = centers[i].shape[0]
-                res_centers = torch.repeat_interleave(centers[i], 2, dim=0)
+                mask = mlvl_valid_coords[j]['3d'][:, 0] == i
+                centers = mlvl_valid_coords[j]['3d'][mask][:, 1:]
+                centers[:, 2] -= size[2] / 2
+
+                num_points = centers.shape[0]
+                res_centers = torch.repeat_interleave(centers, 2, dim=0)
                 res_size = torch.tensor(size, device=device).repeat((num_points*2, 1))
                 res_rotation = torch.tensor(rotation, device=device).reshape(-1, 1)
                 res_rotation = res_rotation.repeat((num_points, 1))
                 
-                anchors.append(torch.cat([res_centers, res_size, res_rotation], dim=1))
-            anchor_list.append(anchors)
+                res_anchors_mlvl = torch.cat([res_centers, res_size, res_rotation], dim=1)
+                anchors_mlvl.append(res_anchors_mlvl)
+            anchors_batch.append(anchors_mlvl)
 
-        return anchor_list
+        return anchors_batch
 
     def loss_single(self, valid_coords, cls_score, bbox_pred, dir_cls_preds, labels,
                     label_weights, bbox_targets, bbox_weights, dir_targets,
@@ -524,26 +525,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
                          label_channels=1,
                          num_classes=1,
                          sampling=True):
-        """Compute regression and classification targets for anchors.
 
-        Args:
-            anchor_list (list[list]): Multi level anchors of each image.
-            gt_bboxes_list (list[:obj:`BaseInstance3DBoxes`]): Ground truth
-                bboxes of each image.
-            input_metas (list[dict]): Meta info of each image.
-            gt_bboxes_ignore_list (None | list): Ignore list of gt bboxes.
-            gt_labels_list (list[torch.Tensor]): Gt labels of batches.
-            label_channels (int): The channel of labels.
-            num_classes (int): The number of classes.
-            sampling (bool): Whether to sample anchors.
-
-        Returns:
-            tuple (list, list, list, list, list, list, int, int):
-                Anchor targets, including labels, label weights,
-                bbox targets, bbox weights, direction targets,
-                direction weights, number of postive anchors and
-                number of negative anchors.
-        """
         num_imgs = len(input_metas)
         assert len(anchor_list) == num_imgs
 
@@ -630,5 +612,24 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
     
     def images_to_levels(self, target, num_levels):
         # TODO jihoo multi-level 구현
-        level_targets = [target]
+        batch_size = len(num_levels)
+        num_featmap_size = len(num_levels[0])
+        level_targets = []
+        batch_targets = []
+        for i in range(batch_size):
+            start = 0
+            for j in range(num_featmap_size):
+                res_target = target[i]
+                end = start + num_levels[i][j]
+                level_targets.append(res_target[start: end])
+                start = end
+            batch_targets.append(level_targets)
+
+        level_targets = []
+        for i in range(num_featmap_size):
+            res_targets = []
+            for j in range(batch_size):
+                res_targets.append(batch_targets[j][i])
+            level_targets.append(res_targets)
+
         return level_targets
