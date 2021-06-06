@@ -104,7 +104,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         normal_init(self.conv_cls, std=0.01, bias=bias_cls)
         normal_init(self.conv_reg, std=0.01)
 
-    def forward_single(self, x, valid_coords):
+    def forward_single(self, x):
         """Forward function on a single-scale feature map.
 
         Args:
@@ -122,7 +122,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             dir_cls_preds = self.conv_dir_cls(x)
         return cls_score, bbox_pred, dir_cls_preds
 
-    def forward(self, feats, valid_coords):
+    def forward(self, feats):
         """Forward pass.
 
         Args:
@@ -133,8 +133,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             tuple[list[torch.Tensor]]: Multi-level class score, bbox \
                 and direction predictions.
         """
-        # valid coords multi scale구현하면 []빼기
-        return multi_apply(self.forward_single, feats, [valid_coords])
+        return multi_apply(self.forward_single, feats)
 
     @staticmethod
     def add_sin_difference(boxes1, boxes2):

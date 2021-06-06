@@ -20,16 +20,17 @@ def kitti_data_prep(root_path, info_prefix, version, out_dir):
         version (str): Dataset version.
         out_dir (str): Output directory of the groundtruth database info.
     """
+    # kitti.create_kitti_info_file(root_path, info_prefix)
+    # kitti.create_reduced_point_cloud(root_path, info_prefix)
+    # create_groundtruth_database(
+    #     'KittiDataset',
+    #     root_path,
+    #     info_prefix,
+    #     f'{out_dir}/{info_prefix}_infos_train.pkl',
+    #     relative_path=False,
+    #     mask_anno_path='instances_train.json',
+    #     with_mask=(version == 'mask'))
     kitti.create_kitti_info_file(root_path, info_prefix)
-    kitti.create_reduced_point_cloud(root_path, info_prefix)
-    create_groundtruth_database(
-        'KittiDataset',
-        root_path,
-        info_prefix,
-        f'{out_dir}/{info_prefix}_infos_train.pkl',
-        relative_path=False,
-        mask_anno_path='instances_train.json',
-        with_mask=(version == 'mask'))
 
 
 def nuscenes_data_prep(root_path,

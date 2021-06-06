@@ -898,13 +898,16 @@ class ProjectToImage(object):
 @PIPELINES.register_module()
 class ResizeFV(object):
 
-    def _resize_fv(self, results):
-        fv = results['fv']
-        h_des, w_des = results['img'].shape[:2]
-        w_scale, h_scale = results['scale_factor'][:2]
+    def __init__(self, size):
+        self.size = size
+
+    def _resize_fv(self, fv, size):
+        w_des, h_des = size
+        w_scale = w_des / fv.shape[1]
+        h_scale = h_des / fv.shape[0]
 
         if (w_scale == 1. and h_scale == 1.):
-            fv_des = fv
+            return fv
         else:
             fv_src = fv
             fv_des = np.zeros((h_des, w_des, fv_src.shape[-1]),
@@ -915,27 +918,15 @@ class ResizeFV(object):
             idx_des.append((w_scale * idx_src[1]).astype(np.int32))
             fv_des[idx_des[0], idx_des[1], :] = \
                 fv_src[idx_src[0], idx_src[1], :]
-        results['fv'] = fv_des
+            return fv_des
 
     def __call__(self, results):
-        """Call function to resize images, bounding boxes, masks, semantic
-        segmentation map.
 
-        Args:
-            results (dict): Result dict from loading pipeline.
-
-        Returns:
-            dict: Resized results, 'img_shape', 'pad_shape', 'scale_factor', \
-                'keep_ratio' keys are added into result dict.
-        """
-
-        self._resize_fv(results)
+        size = self.size
+        fv = results['fv']
+        fv = self._resize_fv(fv, size)
+        results['fv'] = fv
         return results
-
-    def __repr__(self):
-        repr_str = self.__class__.__name__
-        repr_str += f'(img_scale={self.img_scale} '
-        return repr_str
 
 
 @PIPELINES.register_module()

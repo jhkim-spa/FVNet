@@ -303,10 +303,10 @@ class DefaultFormatBundleFV(DefaultFormatBundle):
             if isinstance(results['fv'], list):
                 fvs = [fv.transpose(2, 0, 1) for fv in results['fv']]
                 fvs = np.ascontiguousarray(np.stack(fvs, axis=0))
-                results['fv'] = DC(to_tensor(fvs), stack=True)
+                results['fv'] = DC(to_tensor(fvs), stack=False)
             else:
                 fv = np.ascontiguousarray(results['fv'].transpose(2, 0, 1))
-                results['fv'] = DC(to_tensor(fv), stack=True)
+                results['fv'] = DC(to_tensor(fv), stack=False)
 
         if self.with_gt:
             # Clean GT bboxes in the final
