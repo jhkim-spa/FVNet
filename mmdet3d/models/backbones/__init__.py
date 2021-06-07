@@ -1,4 +1,4 @@
-from mmdet.models.backbones import SSDVGG, HRNet, ResNet, ResNetV1d, ResNeXt
+from mmdet.models.backbones import SSDVGG, HRNet, ResNet, ResNetV1d, ResNeXt, Res2Net
 from .multi_backbone import MultiBackbone
 from .nostem_regnet import NoStemRegNet
 from .pointnet2_sa_msg import PointNet2SAMSG
@@ -9,5 +9,5 @@ from .unet import UNet
 __all__ = [
     'ResNet', 'ResNetV1d', 'ResNeXt', 'SSDVGG', 'HRNet', 'NoStemRegNet',
     'SECOND', 'PointNet2SASSG', 'PointNet2SAMSG', 'MultiBackbone',
-    'UNet'
+    'UNet', 'Res2Net'
 ]

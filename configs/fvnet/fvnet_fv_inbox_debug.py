@@ -2,7 +2,7 @@
 dataset_type = 'KittiDataset'
 data_root = 'data/kitti/'
 class_names = ['Car']
-point_cloud_range = [0, -40, -3, 80, 40, 1]
+point_cloud_range = [0, -40, -3, 70.4, 40, 1]
 input_modality = dict(use_lidar=True, use_camera=False)
 file_client_args = dict(backend='disk')
 
@@ -18,7 +18,7 @@ train_pipeline = [
         with_bbox_3d=True,
         with_label_3d=True,
         file_client_args=file_client_args),
-    dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
+    # dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ProjectToImage'),
@@ -50,17 +50,46 @@ test_pipeline = [
         ]
     )
 ]
+# test_pipeline = [
+#     dict(
+#         type='LoadPointsFromFile',
+#         coord_type='LIDAR',
+#         load_dim=4,
+#         use_dim=4,
+#         file_client_args=file_client_args),
+#     dict(
+#         type='MultiScaleFlipAug3D',
+#         img_scale=(1333, 800),
+#         pts_scale_ratio=1,
+#         flip=False,
+#         transforms=[
+#             dict(
+#                 type='GlobalRotScaleTrans',
+#                 rot_range=[0, 0],
+#                 scale_ratio_range=[1., 1.],
+#                 translation_std=[0, 0, 0]),
+#             dict(type='RandomFlip3D'),
+#             dict(
+#                 type='PointsRangeFilter', point_cloud_range=point_cloud_range),
+#             dict(
+#                 type='DefaultFormatBundle3D',
+#                 class_names=class_names,
+#                 with_label=False),
+#             dict(type='Collect3D', keys=['points'])
+#         ])
+# ]
+
 data = dict(
     samples_per_gpu=2,
     workers_per_gpu=4,
     train=dict(
         type='RepeatDataset',
-        times=2,
+        times=200,
         dataset=dict(
             type=dataset_type,
             data_root=data_root,
-            ann_file=data_root + 'kitti_infos_train.pkl',
-            # ann_file=data_root + 'kitti_infos_debug.pkl',
+            # ann_file=data_root + 'kitti_infos_train.pkl',
+            ann_file=data_root + 'kitti_infos_debug.pkl',
             split='training',
             pts_prefix='velodyne_reduced',
             pipeline=train_pipeline,
@@ -73,8 +102,8 @@ data = dict(
     val=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file=data_root + 'kitti_infos_val.pkl',
-        # ann_file=data_root + 'kitti_infos_debug.pkl',
+        # ann_file=data_root + 'kitti_infos_val.pkl',
+        ann_file=data_root + 'kitti_infos_debug.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
@@ -85,8 +114,8 @@ data = dict(
     test=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file=data_root + 'kitti_infos_val.pkl',
-        # ann_file=data_root + 'kitti_infos_debug.pkl',
+        # ann_file=data_root + 'kitti_infos_val.pkl',
+        ann_file=data_root + 'kitti_infos_debug.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
@@ -95,7 +124,7 @@ data = dict(
         test_mode=True,
         box_type_3d='LiDAR'))
 
-evaluation = dict(interval=1)
+evaluation = dict(interval=5)
 
 model = dict(
     type='FVNet',
@@ -123,6 +152,18 @@ model = dict(
         loss_dir=dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)))
 # model training and testing settings
+# train_cfg = dict(
+#     assigner=dict(  # for Car
+#                 type='MaxIoUAssigner',
+#                 iou_calculator=dict(type='BboxOverlapsNearest3D'),
+#                 pos_iou_thr=0.6,
+#                 neg_iou_thr=0.45,
+#                 min_pos_iou=0.45,
+#                 ignore_iof_thr=-1),
+#     # assigner=dict(type='InBoxAssigner'),
+#     allowed_border=0,
+#     pos_weight=-1,
+#     debug=False)
 train_cfg = dict(
     assigner=dict(type='InBoxAssigner'),
     allowed_border=0,
@@ -134,7 +175,20 @@ test_cfg = dict(
     nms_thr=0.01,
     score_thr=0.5,
     min_bbox_size=0,
+    # nms_pre=500,
     max_num=50)
+
+# optimizer
+# optimizer = dict(type='SGD', lr=0.02, momentum=0.9, weight_decay=0.0001)
+# optimizer_config = dict(grad_clip=None)
+# # learning policy
+# lr_config = dict(
+#     policy='step',
+#     warmup='linear',
+#     warmup_iters=500,
+#     warmup_ratio=0.001,
+#     step=[8, 11])
+# total_epochs = 12
 
 lr = 0.0018
 optimizer = dict(type='AdamW', lr=lr, betas=(0.95, 0.99), weight_decay=0.01)
@@ -153,13 +207,13 @@ momentum_config = dict(
 )
 total_epochs = 40
 
-checkpoint_config = dict(interval=1)
+checkpoint_config = dict(interval=20)
 # yapf:disable push
 # By default we use textlogger hook and tensorboard
 # For more loggers see
 # https://mmcv.readthedocs.io/en/latest/api.html#mmcv.runner.LoggerHook
 log_config = dict(
-    interval=50,
+    interval=5,
     hooks=[
         dict(type='TextLoggerHook'),
         dict(type='TensorboardLoggerHook')

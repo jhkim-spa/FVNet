@@ -656,14 +656,6 @@ def kitti_eval(gt_annos,
     Returns:
         tuple: String and dict of evaluation results.
     """
-    print('----------GT-------------')
-    print(gt_annos[0]['location'])
-    print(gt_annos[0]['dimensions'])
-    print(gt_annos[0]['rotation_y'])
-    print('----------DT-------------')
-    print(dt_annos[0]['location'])
-    print(dt_annos[0]['dimensions'])
-    print(dt_annos[0]['rotation_y'])
     assert len(eval_types) > 0, 'must contain at least one evaluation type'
     if 'aos' in eval_types:
         assert 'bbox' in eval_types, 'must evaluate bbox when evaluating aos'

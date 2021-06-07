@@ -99,10 +99,18 @@ evaluation = dict(interval=1)
 
 model = dict(
     type='FVNet',
+    ## pretrained 사용해보기
+    pretrained='open-mmlab://res2net101_v1d_26w_4s',
     backbone=dict(
-        type='UNet',
-        n_channels=5,
-        n_classes=1),
+        type='Res2Net',
+        depth=101,
+        scales=4,
+        base_width=26),
+    neck=dict(
+        type='FPN',
+        in_channels=[256, 512, 1024, 2048],
+        out_channels=256,
+        num_outs=4),
     bbox_head=dict(
         type='FVNetHead',
         anchor_cfg =dict(size=[1.6, 3.9, 1.56],

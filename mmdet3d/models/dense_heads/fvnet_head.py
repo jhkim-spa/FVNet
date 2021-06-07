@@ -193,10 +193,11 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
                     losses.
         """
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
+        batch_size = cls_scores[0].shape[0]
         
         device = cls_scores[0].device
-        anchor_list = self.get_anchors(valid_coords, self.anchor_cfg,
-            featmap_sizes, device=device)
+        anchor_list = self.get_anchors(batch_size, valid_coords,
+            self.anchor_cfg, featmap_sizes, device=device)
         label_channels = self.cls_out_channels if self.use_sigmoid_cls else 1
         cls_reg_targets = self.anchor_target_3d(
             anchor_list,
@@ -260,9 +261,10 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         num_levels = len(cls_scores)
         featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]
         device = cls_scores[0].device
+        batch_size = cls_scores[0].shape[0]
 
-        mlvl_anchors = self.get_anchors(valid_coords, self.anchor_cfg,
-            featmap_sizes, device=device)[0]
+        mlvl_anchors = self.get_anchors(batch_size, valid_coords,
+            self.anchor_cfg, featmap_sizes, device=device)[0]
         mlvl_anchors = [
             anchor.reshape(-1, self.box_code_size) for anchor in mlvl_anchors
         ]
@@ -326,6 +328,8 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
                 mlvl_valid_coords):
             assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
             assert cls_score.size()[-2:] == dir_cls_pred.size()[-2:]
+            if valid_coords['2d'].sum() == 0:
+                continue
             valid_coords_2d = valid_coords['2d'][:, 1:]
             dir_cls_pred = dir_cls_pred.permute(1, 2, 0)
             dir_cls_pred = dir_cls_pred[valid_coords_2d[:, 0],
@@ -386,11 +390,11 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         bboxes = input_meta['box_type_3d'](bboxes, box_dim=self.box_code_size)
         return bboxes, scores, labels
 
-    def get_anchors(self, mlvl_valid_coords, anchor_cfg, featmap_sizes, device):
+    def get_anchors(self, batch_size, mlvl_valid_coords, anchor_cfg,
+        featmap_sizes, device):
         # multi scale 구현하기
         size = anchor_cfg['size']
         rotation = anchor_cfg['rotation']
-        batch_size = mlvl_valid_coords[0]['2d'][:, 0][-1].item() + 1
 
         anchors_batch = []
         for i in range(batch_size):
@@ -434,6 +438,12 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             tuple[torch.Tensor]: Losses of class, bbox \
                 and direction, respectively.
         """
+        if valid_coords['2d'].sum() == 0:
+            loss_cls = 0 * bbox_pred.sum()
+            loss_bbox = 0 * bbox_pred.sum()
+            loss_dir = 0 * bbox_pred.sum()
+            return loss_cls, loss_bbox, loss_dir
+
         # classification loss
         if num_total_samples is None:
             num_total_samples = int(cls_score.shape[0])
@@ -448,7 +458,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
                 valid_coords['2d'][batch_idx][:, 2], :].reshape(-1, self.num_classes))
         cls_score = torch.cat(cls_score_list)
         # cls_score = cls_score.reshape(-1, self.num_classes)
-        assert labels.max().item() <= self.num_classes
+        # assert labels.max().item() <= self.num_classes
         loss_cls = self.loss_cls(
             cls_score, labels, label_weights, avg_factor=num_total_samples)
 
