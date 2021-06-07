@@ -611,13 +611,12 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
                 num_total_pos, num_total_neg)
     
     def images_to_levels(self, target, num_levels):
-        # TODO jihoo multi-level 구현
         batch_size = len(num_levels)
         num_featmap_size = len(num_levels[0])
-        level_targets = []
         batch_targets = []
         for i in range(batch_size):
             start = 0
+            level_targets = []
             for j in range(num_featmap_size):
                 res_target = target[i]
                 end = start + num_levels[i][j]
