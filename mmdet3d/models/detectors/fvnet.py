@@ -113,7 +113,8 @@ class FVNet(SingleStage3DDetector):
             *loss_inputs, valid_coords, gt_bboxes_ignore=gt_bboxes_ignore)
         return losses
     
-    def simple_test(self, fv, img_metas, img=None, rescale=False):
+    def simple_test(self, fv, points, img_metas, img=None, rescale=False,
+        gt_bboxes_3d=None):
         """Test function without augmentaiton."""
         feats, valid_coords = self.extract_feat(fv)
         outs = self.bbox_head(feats)
@@ -123,6 +124,18 @@ class FVNet(SingleStage3DDetector):
             bbox3d2result(bboxes, scores, labels)
             for bboxes, scores, labels in bbox_list
         ]
+        #visualization
+        from mmdet3d.apis import visualize_open3d
+        boxes = bbox_results[0]['boxes_3d'].tensor
+        boxes = boxes.numpy()
+        points = points[0].cpu().numpy()
+        gt = gt_bboxes_3d[0][0].tensor
+        gt = gt.numpy()
+        visualize_open3d(points, boxes, gt, save_path='./visual_results',
+            idx=img_metas[0]['sample_idx'])
+        # visualize_open3d(points, boxes, save_path='./visual_results',
+        #     idx=img_metas[0]['sample_idx'])
+
         return bbox_results
 
     def aug_test(self, points, img_metas, imgs=None, rescale=False):
@@ -147,7 +160,7 @@ class FVNet(SingleStage3DDetector):
 
         return [merged_bboxes]
     
-    def forward_test(self, fv, img_metas, img=None, **kwargs):
+    def forward_test(self, fv, points, img_metas, img=None, **kwargs):
 
         for var, name in [(fv, 'points'), (img_metas, 'img_metas')]:
             if not isinstance(var, list):
@@ -162,7 +175,7 @@ class FVNet(SingleStage3DDetector):
 
         if num_augs == 1:
             img = [img] if img is None else img
-            return self.simple_test(fv[0], img_metas[0], img[0], **kwargs)
+            return self.simple_test(fv[0], points[0], img_metas[0], img[0], **kwargs)
         else:
             return self.aug_test(fv, img_metas, img, **kwargs)
     
