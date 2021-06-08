@@ -117,7 +117,8 @@ class UNet(nn.Module):
         out3 = x33
         out4 = x44
 
-        outs = [out1, out2, out3, out4]
+        # outs = [out1, out2, out3, out4]
+        outs = [out4]
         return outs
 
     def init_weights(self, pretrained=None):

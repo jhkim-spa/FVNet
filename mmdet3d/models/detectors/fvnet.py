@@ -1,12 +1,18 @@
 import os
+import copy
+from os import path as osp
 
+import numpy as np
+import mmcv
 from mmdet3d.models.detectors.base import Base3DDetector
+from mmcv.parallel import DataContainer as DC
 import torch
 from torch import nn as nn
 
 from mmdet3d.core import bbox3d2result, merge_aug_bboxes_3d
 from mmdet.models import DETECTORS, build_backbone, build_neck, build_head
 from .single_stage import SingleStage3DDetector
+from mmdet3d.core import Box3DMode, show_result
 
 
 @DETECTORS.register_module()
@@ -50,7 +56,8 @@ class FVNet(SingleStage3DDetector):
         device = fv[0].device
         mlvl_valid_coords = []
         featmap_sizes = [featmap.size()[-2:] for featmap in feats]
-        depth_range = (0, 20, 40, 60, 80)
+        # depth_range = (0, 20, 40, 60, 80)
+        depth_range = (0, 80)
         fv_src = fv
 
         for i in range(len(feats)):
@@ -157,3 +164,65 @@ class FVNet(SingleStage3DDetector):
             return self.simple_test(fv[0], img_metas[0], img[0], **kwargs)
         else:
             return self.aug_test(fv, img_metas, img, **kwargs)
+    
+    def show_results(self, data, result, out_dir):
+        """Results visualization.
+
+        Args:
+            data (list[dict]): Input points and the information of the sample.
+            result (list[dict]): Prediction results.
+            out_dir (str): Output directory of visualization result.
+        """
+        for batch_id in range(len(result)):
+            if isinstance(data['fv'][0], DC):
+                points = data['fv'][0]._data[0][batch_id].numpy()
+            elif mmcv.is_list_of(data['fv'][0], torch.Tensor):
+                points = data['fv'][0][batch_id]
+            else:
+                ValueError(f"Unsupported data type {type(data['fv'][0])} "
+                           f'for visualization!')
+            if isinstance(data['img_metas'][0], DC):
+                pts_filename = data['img_metas'][0]._data[0][batch_id][
+                    'pts_filename']
+                box_mode_3d = data['img_metas'][0]._data[0][batch_id][
+                    'box_mode_3d']
+            elif mmcv.is_list_of(data['img_metas'][0], dict):
+                pts_filename = data['img_metas'][0][batch_id]['pts_filename']
+                box_mode_3d = data['img_metas'][0][batch_id]['box_mode_3d']
+            else:
+                ValueError(
+                    f"Unsupported data type {type(data['img_metas'][0])} "
+                    f'for visualization!')
+            file_name = osp.split(pts_filename)[-1].split('.')[0]
+
+            assert out_dir is not None, 'Expect out_dir, got none.'
+            points = self._load_points(pts_filename).reshape(-1, 4)[:, :3]
+
+            pred_bboxes = copy.deepcopy(
+                result[batch_id]['boxes_3d'].tensor.numpy())
+            # for now we convert points into depth mode
+
+            show_result(points, None, pred_bboxes, out_dir, file_name)
+
+    def _load_points(self, pts_filename):
+        """Private function to load point clouds data.
+
+        Args:
+            pts_filename (str): Filename of point clouds data.
+
+        Returns:
+            np.ndarray: An array containing point clouds data.
+        """
+        self.file_client_args = dict(backend='disk')
+        self.file_client = mmcv.FileClient(**self.file_client_args)
+        try:
+            pts_bytes = self.file_client.get(pts_filename)
+            points = np.frombuffer(pts_bytes, dtype=np.float32)
+        except ConnectionError:
+            mmcv.check_file_exist(pts_filename)
+            if pts_filename.endswith('.npy'):
+                points = np.load(pts_filename)
+            else:
+                points = np.fromfile(pts_filename, dtype=np.float32)
+
+        return points
