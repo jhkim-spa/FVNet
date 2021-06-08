@@ -40,6 +40,11 @@ test_pipeline = [
         pts_scale_ratio=1,
         flip=False,
         transforms=[
+            dict(
+                type='GlobalRotScaleTrans',
+                rot_range=[0, 0],
+                scale_ratio_range=[1., 1.],
+                translation_std=[0, 0, 0]),
             dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
             dict(type='RandomFlip3D'),
             dict(type='ProjectToImage'),
@@ -99,6 +104,7 @@ evaluation = dict(interval=1)
 
 model = dict(
     type='FVNet',
+    depth_range=(0, 80),
     backbone=dict(
         type='UNet',
         n_channels=5,

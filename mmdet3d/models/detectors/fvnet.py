@@ -19,6 +19,7 @@ from mmdet3d.core import Box3DMode, show_result
 class FVNet(SingleStage3DDetector):
 
     def __init__(self,
+                 depth_range,
                  backbone,
                  neck=None,
                  bbox_head=None,
@@ -33,6 +34,7 @@ class FVNet(SingleStage3DDetector):
             test_cfg=test_cfg,
             pretrained=pretrained,
         )
+        self.depth_range = depth_range
 
     def extract_feat(self, fv):
 
@@ -56,8 +58,7 @@ class FVNet(SingleStage3DDetector):
         device = fv[0].device
         mlvl_valid_coords = []
         featmap_sizes = [featmap.size()[-2:] for featmap in feats]
-        # depth_range = (0, 20, 40, 60, 80)
-        depth_range = (0, 80)
+        depth_range = self.depth_range
         fv_src = fv
 
         for i in range(len(feats)):

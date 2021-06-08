@@ -40,6 +40,11 @@ test_pipeline = [
         pts_scale_ratio=1,
         flip=False,
         transforms=[
+            dict(
+                type='GlobalRotScaleTrans',
+                rot_range=[0, 0],
+                scale_ratio_range=[1., 1.],
+                translation_std=[0, 0, 0]),
             dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
             dict(type='RandomFlip3D'),
             dict(type='ProjectToImage'),
@@ -99,18 +104,12 @@ evaluation = dict(interval=1)
 
 model = dict(
     type='FVNet',
-    ## pretrained 사용해보기
-    pretrained='open-mmlab://res2net101_v1d_26w_4s',
+    # depth_range=(0, 80),
+    depth_range=(0, 20, 40, 60, 80),
     backbone=dict(
-        type='Res2Net',
-        depth=101,
-        scales=4,
-        base_width=26),
-    neck=dict(
-        type='FPN',
-        in_channels=[256, 512, 1024, 2048],
-        out_channels=256,
-        num_outs=4),
+        type='UNet',
+        num_outs=4,
+        n_channels=5),
     bbox_head=dict(
         type='FVNetHead',
         anchor_cfg =dict(size=[1.6, 3.9, 1.56],
@@ -132,7 +131,13 @@ model = dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)))
 # model training and testing settings
 train_cfg = dict(
-    assigner=dict(type='InBoxAssigner'),
+    assigner=dict(  # for Car
+                type='MaxIoUAssigner',
+                iou_calculator=dict(type='BboxOverlapsNearest3D'),
+                pos_iou_thr=0.6,
+                neg_iou_thr=0.45,
+                min_pos_iou=0.45,
+                ignore_iof_thr=-1),
     allowed_border=0,
     pos_weight=-1,
     debug=False)
