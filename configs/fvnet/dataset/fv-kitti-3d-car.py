@@ -34,11 +34,6 @@ test_pipeline = [
         use_dim=4,
         file_client_args=file_client_args),
     dict(
-        type='LoadAnnotations3D',
-        with_bbox_3d=True,
-        with_label_3d=True,
-        file_client_args=file_client_args),
-    dict(
         type='MultiScaleFlipAug3D',
         img_scale=(1242, 375),
         pts_scale_ratio=1,
@@ -54,8 +49,9 @@ test_pipeline = [
             dict(type='ProjectToImage'),
             dict(type='ResizeFV', size=(1242, 375)),
             dict(type='PadFV', size_divisor=32),
-            dict(type='DefaultFormatBundleFV', class_names=class_names),
-            dict(type='Collect3D', keys=['fv', 'points', 'gt_bboxes_3d'])
+            dict(type='DefaultFormatBundleFV', class_names=class_names,
+                with_label=False),
+            dict(type='Collect3D', keys=['fv'])
         ]
     )
 ]
