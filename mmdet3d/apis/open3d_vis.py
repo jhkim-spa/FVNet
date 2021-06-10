@@ -99,6 +99,7 @@ def _draw_bboxes(bbox3d,
             center[rot_axis] -= dim[
                 rot_axis] / 2  # bottom center to gravity center
         box3d = geometry.OrientedBoundingBox(center, rot_mat, dim)
+        box3d.color = np.array(bbox_color)
 
         line_set = geometry.LineSet.create_from_oriented_bounding_box(box3d)
         # draw bboxes on visualizer
@@ -115,66 +116,66 @@ def _draw_bboxes(bbox3d,
         vis.update_geometry(pcd)
 
 
-def show_pts_boxes(points,
-                   bbox3d=None,
-                   show=True,
-                   save_path=None,
-                   points_size=2,
-                   point_color=(0.5, 0.5, 0.5),
-                   bbox_color=(0, 1, 0),
-                   points_in_box_color=(1, 0, 0),
-                   rot_axis=2,
-                   center_mode='lidar_bottom',
-                   mode='xyz'):
-    """Draw bbox and points on visualizer.
+# def show_pts_boxes(points,
+#                    bbox3d=None,
+#                    show=True,
+#                    save_path=None,
+#                    points_size=2,
+#                    point_color=(0.5, 0.5, 0.5),
+#                    bbox_color=(0, 1, 0),
+#                    points_in_box_color=(1, 0, 0),
+#                    rot_axis=2,
+#                    center_mode='lidar_bottom',
+#                    mode='xyz'):
+#     """Draw bbox and points on visualizer.
 
-    Args:
-        points (numpy.array | torch.tensor, shape=[N, 3+C]):
-            points to visualize.
-        bbox3d (numpy.array | torch.tensor, shape=[M, 7]):
-            3d bbox (x, y, z, dx, dy, dz, yaw) to visualize. Default: None.
-        show (bool): whether to show the visualization results. Default: True.
-        save_path (str): path to save visualized results. Default: None.
-        points_size (int): the size of points to show on visualizer.
-            Default: 2.
-        point_color (tuple[float]): the color of points.
-            Default: (0.5, 0.5, 0.5).
-        bbox_color (tuple[float]): the color of bbox. Default: (0, 1, 0).
-        points_in_box_color (tuple[float]):
-            the color of points which are in bbox3d. Default: (1, 0, 0).
-        rot_axis (int): rotation axis of bbox. Default: 2.
-        center_mode (bool): indicate the center of bbox is bottom center
-            or gravity center. avaliable mode
-            ['lidar_bottom', 'camera_bottom']. Default: 'lidar_bottom'.
-        mode (str):  indicate type of the input points, avaliable mode
-            ['xyz', 'xyzrgb']. Default: 'xyz'.
-    """
-    # TODO: support score and class info
-    assert 0 <= rot_axis <= 2
+#     Args:
+#         points (numpy.array | torch.tensor, shape=[N, 3+C]):
+#             points to visualize.
+#         bbox3d (numpy.array | torch.tensor, shape=[M, 7]):
+#             3d bbox (x, y, z, dx, dy, dz, yaw) to visualize. Default: None.
+#         show (bool): whether to show the visualization results. Default: True.
+#         save_path (str): path to save visualized results. Default: None.
+#         points_size (int): the size of points to show on visualizer.
+#             Default: 2.
+#         point_color (tuple[float]): the color of points.
+#             Default: (0.5, 0.5, 0.5).
+#         bbox_color (tuple[float]): the color of bbox. Default: (0, 1, 0).
+#         points_in_box_color (tuple[float]):
+#             the color of points which are in bbox3d. Default: (1, 0, 0).
+#         rot_axis (int): rotation axis of bbox. Default: 2.
+#         center_mode (bool): indicate the center of bbox is bottom center
+#             or gravity center. avaliable mode
+#             ['lidar_bottom', 'camera_bottom']. Default: 'lidar_bottom'.
+#         mode (str):  indicate type of the input points, avaliable mode
+#             ['xyz', 'xyzrgb']. Default: 'xyz'.
+#     """
+#     # TODO: support score and class info
+#     assert 0 <= rot_axis <= 2
 
-    # init visualizer
-    vis = o3d.visualization.Visualizer()
-    vis.create_window()
-    mesh_frame = geometry.TriangleMesh.create_coordinate_frame(
-        size=1, origin=[0, 0, 0])  # create coordinate frame
-    vis.add_geometry(mesh_frame)
+#     # init visualizer
+#     vis = o3d.visualization.Visualizer()
+#     vis.create_window()
+#     mesh_frame = geometry.TriangleMesh.create_coordinate_frame(
+#         size=1, origin=[0, 0, 0])  # create coordinate frame
+#     vis.add_geometry(mesh_frame)
 
-    # draw points
-    pcd, points_colors = _draw_points(points, vis, points_size, point_color,
-                                      mode)
+#     # draw points
+#     pcd, points_colors = _draw_points(points, vis, points_size, point_color,
+#                                       mode)
 
-    # draw boxes
-    if bbox3d is not None:
-        _draw_bboxes(bbox3d, vis, points_colors, pcd, bbox_color,
-                     points_in_box_color, rot_axis, center_mode, mode)
+#     # draw boxes
+#     if bbox3d is not None:
+#         _draw_bboxes(bbox3d, vis, points_colors, pcd, bbox_color,
+#                      points_in_box_color, rot_axis, center_mode, mode)
 
-    if show:
-        vis.run()
+#     if show:
+#         vis.run()
 
-    if save_path is not None:
-        vis.capture_screen_image(save_path)
+#     if save_path is not None:
+#         vis.capture_screen_image(save_path)
 
-    vis.destroy_window()
+#     vis.destroy_window()
 
 
 def _draw_bboxes_ind(bbox3d,
@@ -429,13 +430,14 @@ class Visualizer(object):
             ['xyz', 'xyzrgb']. Default: 'xyz'.
     """
     def __init__(self,
+                 window_name,
                  points,
                  bbox3d=None,
                  save_path=None,
-                 points_size=1,
+                 points_size=2,
                  point_color=(0.5, 0.5, 0.5),
-                 bbox_color=(0, 1, 0),
-                 points_in_box_color=(1, 0, 0),
+                 bbox_color=(0, 0, 0),
+                 points_in_box_color=(0, 0, 0),
                  rot_axis=2,
                  center_mode='lidar_bottom',
                  mode='xyz',
@@ -444,9 +446,10 @@ class Visualizer(object):
         assert 0 <= rot_axis <= 2
 
         # init visualizer
+        window_name = str(window_name)
         self.o3d_visualizer = o3d.visualization.Visualizer()
         if visible:
-            self.o3d_visualizer.create_window()
+            self.o3d_visualizer.create_window(window_name=window_name)
         else:
             self.o3d_visualizer.create_window(visible=False)
         self.visible = visible
@@ -521,6 +524,14 @@ class Visualizer(object):
             view_ctl.set_zoom(0.34)
 
         if self.visible == True:
+            view_ctl = self.o3d_visualizer.get_view_control()
+            view_ctl.set_front(
+                (-0.54622966842019161, 0.072289944923655952, 0.83451022354462645))
+            view_ctl.set_lookat(
+                (21.690369172607891, -4.8869208867029466, 7.9556688637922477))
+            view_ctl.set_up(
+                (0.83303190122487514, -0.057425042059983195, 0.55023650922678613))
+            view_ctl.set_zoom(0.46)
             self.o3d_visualizer.run()
         if save_path is not None:
             #  self.o3d_visualizer.capture_screen_image(save_path)
@@ -534,17 +545,18 @@ class Visualizer(object):
 def visualize_open3d(points,
                      pred_bboxes=None,
                      gt_bboxes=None,
-                     save_path='./',
+                     save_path=None,
                      idx=0):
     # points: np.array(-1, 5)
     # gt_bboxes, pred_bboxes: np.array(-1, 9) or (-1, 7)
 
-    vis = Visualizer(points, visible=True) # visible=True for show
+    vis = Visualizer(window_name=idx, points=points, visible=True) # visible=True for show
     if pred_bboxes is not None:
-        vis.add_bboxes(bbox3d=pred_bboxes, bbox_color=(1, 0, 0))
+        vis.add_bboxes(bbox3d=pred_bboxes, bbox_color=(0, 0, 1))
     if gt_bboxes is not None:
-        vis.add_bboxes(bbox3d=gt_bboxes, bbox_color=(0, 1, 0))
-    vis.show(save_path='./%s/%06d.png' % (save_path, idx))
+        vis.add_bboxes(bbox3d=gt_bboxes, bbox_color=(1, 0, 0),
+        points_in_box_color=(1, 0, 0))
+    vis.show(save_path=save_path)
 
 if __name__ == '__main__':
     # for example

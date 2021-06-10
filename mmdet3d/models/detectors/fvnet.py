@@ -113,8 +113,7 @@ class FVNet(SingleStage3DDetector):
             *loss_inputs, valid_coords, gt_bboxes_ignore=gt_bboxes_ignore)
         return losses
     
-    def simple_test(self, fv, img_metas, img=None, rescale=False,
-        gt_bboxes_3d=None):
+    def simple_test(self, fv, img_metas, img=None, rescale=False):
         """Test function without augmentaiton."""
         feats, valid_coords = self.extract_feat(fv)
         outs = self.bbox_head(feats)
