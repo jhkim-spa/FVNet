@@ -577,29 +577,6 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
              num_classes=num_classes,
              sampling=sampling)
 
-##############################
-        # import matplotlib.pyplot as plt
-        # from mmdet3d.core.bbox.structures.lidar_box3d import LiDARInstance3DBoxes
-
-        # anchor_list = LiDARInstance3DBoxes(anchor_list[0]\
-        #     [pos_inds_list[0]])
-
-        # plt.scatter(gt_bboxes_list[0].corners[0][:, 0],
-        #             gt_bboxes_list[0].corners[0][:, 1], color='r',
-        #             s=1)
-        # # plt.scatter(gt_bboxes_list[1].corners[0][:, 0],
-        # #             gt_bboxes_list[1].corners[0][:, 1], color='b',
-        # #             s=1)
-        
-        # plt.scatter(anchor_list.corners[0][:, 0].cpu(),
-        #             anchor_list.corners[0][:, 1].cpu(), color='b',
-        #             s=1)
-        # plt.scatter(anchor_list.corners[1][:, 0].cpu(),
-        #             anchor_list.corners[1][:, 1].cpu(), color='g',
-        #             s=1)
-        # plt.gca().set_aspect('equal', adjustable='box')
-        # plt.savefig('test.png')
-##############################
         # no valid anchors
         if any([labels is None for labels in all_labels]):
             return None

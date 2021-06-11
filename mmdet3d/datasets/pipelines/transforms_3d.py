@@ -3,6 +3,7 @@ import numpy as np
 from mmcv import is_tuple_of
 from mmcv.utils import build_from_cfg
 import torch
+from copy import deepcopy
 
 from mmdet3d.core import VoxelGenerator
 from mmdet3d.core.bbox import box_np_ops
@@ -860,8 +861,8 @@ class ProjectToImage(object):
         return points[:2, :]
 
     def render_lidar_on_image(self, points, width, height, lidar2img):
-        reflectance = points.tensor[:, -1].numpy()
-        points = points.tensor[:, :3].numpy()
+        reflectance = points[:, -1]
+        points = points[:, :3]
         proj_velo2cam2 = lidar2img[:3]
 
         pts_2d = self.project_to_image(points.transpose(1, 0),
@@ -876,7 +877,8 @@ class ProjectToImage(object):
         imgfov_pc_velo = points[inds, :]
         reflectance = reflectance[inds]
 
-        pc_projected = np.zeros((height, width, 5), dtype=np.float32)
+        pc_projected = np.zeros((height, width, 5),
+            dtype=np.float32)
         x_coords = np.trunc(imgfov_pc_pixel[0]).astype(np.int32)
         y_coords = np.trunc(imgfov_pc_pixel[1]).astype(np.int32)
         pc_projected[y_coords, x_coords, :3] = imgfov_pc_velo
@@ -885,12 +887,48 @@ class ProjectToImage(object):
         pc_projected[:, :, -1] = flag_channel
         return pc_projected
 
+    def get_objectness(self, points, width, height, lidar2img):
+        points = points[:, :3]
+        proj_velo2cam2 = lidar2img[:3]
+        pts_2d = self.project_to_image(points.transpose(1, 0),
+                                       proj_velo2cam2)
+
+        inds = np.where((pts_2d[0, :] < width) & (pts_2d[0, :] >= 0) &
+                        (pts_2d[1, :] < height) & (pts_2d[1, :] >= 0) &
+                        (points[:, 0] > 0)
+                        )[0]
+
+        imgfov_pc_pixel = pts_2d[:, inds]
+        imgfov_pc_velo = points[inds, :]
+
+        pc_projected = np.zeros((height, width, 1),
+            dtype=np.float32)
+        x_coords = np.trunc(imgfov_pc_pixel[0]).astype(np.int32)
+        y_coords = np.trunc(imgfov_pc_pixel[1]).astype(np.int32)
+        pc_projected[y_coords, x_coords, 0] = 1.
+        return pc_projected
+
     def __call__(self, input_dict):
+        from mmdet3d.core.bbox.box_np_ops import points_in_rbbox
         width = input_dict['img_info']['width']
         height = input_dict['img_info']['height']
-        points = input_dict['points']
         lidar2img = input_dict['lidar2img']
+        points = deepcopy(input_dict['points'])
+
+        points = points.tensor.numpy()
         fv = self.render_lidar_on_image(points, width, height, lidar2img)
+
+        # if True:
+        if False:
+            gt_bboxes_3d = input_dict['ann_info']['gt_bboxes_3d']
+            objectness_idx = points_in_rbbox(points, gt_bboxes_3d.tensor.numpy())
+            objectness_idx = objectness_idx.sum(axis=1).astype(np.int32)
+            objectness_idx = np.where(objectness_idx == 1)[0]
+            objectness_points = points[objectness_idx]
+            objectness = self.get_objectness(objectness_points, width, height, lidar2img)
+            fv = np.concatenate((fv, objectness), axis=2)
+            fv = fv[:, :, [0, 1, 2, 3, 5, 4]]
+
         input_dict['fv'] = fv
         return input_dict
 

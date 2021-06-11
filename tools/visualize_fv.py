@@ -12,9 +12,8 @@ from visualize_utils import (draw_projected_box3d, load_label, load_velo_scan,
                              map_box_to_image, project_cam2_to_velo,
                              project_camera_to_lidar, project_to_image,
                              project_velo_to_cam2, read_calib_file)
-
+from open3d_vis import visualize_open3d
 from mmdet3d.apis import init_detector
-from mmdet3d.apis.open3d_vis import visualize_open3d
 from mmdet3d.core.bbox import CameraInstance3DBoxes, get_box_type
 from mmdet3d.datasets.pipelines import Compose
 
