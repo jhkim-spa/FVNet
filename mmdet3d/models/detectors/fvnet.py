@@ -19,8 +19,9 @@ from mmdet3d.core import Box3DMode, show_result
 class FVNet(SingleStage3DDetector):
 
     def __init__(self,
-                 depth_range,
-                 backbone,
+                 depth_wise=True,
+                 depth_range=(0, 20, 40, 60, 80),
+                 backbone=None,
                  neck=None,
                  bbox_head=None,
                  train_cfg=None,
@@ -34,6 +35,7 @@ class FVNet(SingleStage3DDetector):
             test_cfg=test_cfg,
             pretrained=pretrained,
         )
+        self.depth_wise = depth_wise
         self.depth_range = depth_range
 
     def extract_feat(self, fv):
@@ -58,7 +60,6 @@ class FVNet(SingleStage3DDetector):
         device = fv[0].device
         mlvl_valid_coords = []
         featmap_sizes = [featmap.size()[-2:] for featmap in feats]
-        depth_range = self.depth_range
         fv_src = fv
 
         for i in range(len(feats)):
@@ -73,10 +74,11 @@ class FVNet(SingleStage3DDetector):
             idx_src = torch.nonzero(fv_src[:, -1, :, :], as_tuple=True)
             depth = fv_src[idx_src[0], 0, idx_src[1], idx_src[2]]
 
-            mask_sort = torch.argsort(depth, descending=True)
-            mask_range = torch.where((depth_range[i] < depth[mask_sort]) &\
-                                        (depth_range[i+1] > depth[mask_sort]))[0]
-            idx_src = [idx[mask_sort][mask_range] for idx in idx_src]
+            if self.depth_wise:
+                mask_sort = torch.argsort(depth, descending=True)
+                mask_range = torch.where((self.depth_range[i] < depth[mask_sort]) &\
+                                         (self.depth_range[i+1] > depth[mask_sort]))[0]
+                idx_src = [idx[mask_sort][mask_range] for idx in idx_src]
             idx_des = list()
             idx_des.append(idx_src[0])
             idx_des.append((h_scale * idx_src[1]).to(torch.long))

@@ -3,7 +3,7 @@ _base_ = [
 ]
 
 model = dict(
-    depth_range=(0, 20, 40, 60, 80),
+    depth_wise=False,
     backbone=dict(
         num_outs=4
     )
