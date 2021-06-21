@@ -80,10 +80,11 @@ class OutConv(nn.Module):
 
 @BACKBONES.register_module()
 class UNet(nn.Module):
-    def __init__(self, n_channels, num_outs, n_classes=1, bilinear=True):
+    def __init__(self, n_channels, num_outs, outconv=True, n_classes=1, bilinear=True):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.num_outs = num_outs
+        self.outconv = outconv
         self.n_classes = n_classes
         self.bilinear = bilinear
 
@@ -113,10 +114,14 @@ class UNet(nn.Module):
         x33 = self.up3(x22, x2)
         x44 = self.up4(x33, x1)
 
-        out1 = self.outc1(x11)
-        out2 = self.outc2(x22)
+        out1 = x11
+        out2 = x22
         out3 = x33
         out4 = x44
+
+        if self.outconv:
+            out1 = self.outc1(out1)
+            out2 = self.outc2(out2)
 
         outs = [out1, out2, out3, out4]
         outs = outs[-self.num_outs:]

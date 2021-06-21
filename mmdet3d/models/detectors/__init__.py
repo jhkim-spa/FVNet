@@ -9,9 +9,10 @@ from .ssd3dnet import SSD3DNet
 from .votenet import VoteNet
 from .voxelnet import VoxelNet
 from .fvnet import FVNet
+from .fvnet_fusion import FVNetFusion
 
 __all__ = [
     'Base3DDetector', 'VoxelNet', 'DynamicVoxelNet', 'MVXTwoStageDetector',
     'DynamicMVXFasterRCNN', 'MVXFasterRCNN', 'PartA2', 'VoteNet', 'H3DNet',
-    'CenterPoint', 'SSD3DNet', 'FVNet'
+    'CenterPoint', 'SSD3DNet', 'FVNet', 'FVNetFusion'
 ]
