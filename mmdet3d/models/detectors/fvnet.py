@@ -40,7 +40,6 @@ class FVNet(SingleStage3DDetector):
 
     def extract_feat(self, fv):
 
-        fv = torch.stack(fv)
         feats = self.backbone(fv)
         if self.with_neck:
             feats = self.neck(feats)
@@ -108,8 +107,9 @@ class FVNet(SingleStage3DDetector):
                       gt_labels_3d,
                       gt_bboxes_ignore=None):
 
+        fv = torch.stack(fv)
         feats, valid_coords = self.extract_feat(fv)
-        outs = self.bbox_head(feats)
+        outs = self.bbox_head(feats, [fv])
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
         losses = self.bbox_head.loss(
             *loss_inputs, valid_coords, gt_bboxes_ignore=gt_bboxes_ignore)

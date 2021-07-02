@@ -4,4 +4,4 @@ python tools/visualize_fv.py\
 	--calib ./data/kitti/validation/calib\
 	--label ./data/kitti/validation/label_2\
 	--config ./configs/fvnet/fv_inbox_unet_single_step_150e.py\
-	--checkpoint ./work_dirs/complete/fv_inbox_unet_single_step_150e/epoch_72.pth
+	--checkpoint ./latest.pth

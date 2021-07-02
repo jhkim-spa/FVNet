@@ -92,7 +92,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         """Initialize neural network layers of the head."""
         self.cls_out_channels = self.num_anchors * self.num_classes
         self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
-        self.conv_reg = nn.Conv2d(self.feat_channels,
+        self.conv_reg = nn.Conv2d(self.feat_channels+3,
                                   self.num_anchors * self.box_code_size, 1)
         if self.use_direction_classifier:
             self.conv_dir_cls = nn.Conv2d(self.feat_channels,
@@ -104,7 +104,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         normal_init(self.conv_cls, std=0.01, bias=bias_cls)
         normal_init(self.conv_reg, std=0.01)
 
-    def forward_single(self, x):
+    def forward_single(self, x, fv):
         """Forward function on a single-scale feature map.
 
         Args:
@@ -116,13 +116,13 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         """
         # valid_coords
         cls_score = self.conv_cls(x)
-        bbox_pred = self.conv_reg(x)
+        bbox_pred = self.conv_reg(torch.cat((fv[:, :3, :, :], x), dim=1))
         dir_cls_preds = None
         if self.use_direction_classifier:
             dir_cls_preds = self.conv_dir_cls(x)
         return cls_score, bbox_pred, dir_cls_preds
 
-    def forward(self, feats):
+    def forward(self, feats, fv):
         """Forward pass.
 
         Args:
@@ -133,7 +133,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             tuple[list[torch.Tensor]]: Multi-level class score, bbox \
                 and direction predictions.
         """
-        return multi_apply(self.forward_single, feats)
+        return multi_apply(self.forward_single, feats, fv)
 
     @staticmethod
     def add_sin_difference(boxes1, boxes2):
