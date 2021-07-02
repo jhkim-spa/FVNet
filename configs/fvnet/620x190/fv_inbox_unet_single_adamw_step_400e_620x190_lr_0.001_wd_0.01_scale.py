@@ -1,5 +1,5 @@
 _base_ = [
-    '../model/fvnet_fv.py', '../dataset/fv-kitti-3d-car_620x190.py',
+    '../model/fvnet_fv.py', '../dataset/fv-kitti-3d-car_620x190_scale.py',
     '../../_base_/default_runtime.py'
 ]
 
@@ -18,7 +18,7 @@ test_cfg = dict(
 
 # optimizer
 # This schedule is mainly used by models on nuScenes dataset
-lr = 0.01
+lr = 0.001
 optimizer = dict(type='AdamW', lr=lr, weight_decay=0.01)
 # max_norm=10 is better for SECOND
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))

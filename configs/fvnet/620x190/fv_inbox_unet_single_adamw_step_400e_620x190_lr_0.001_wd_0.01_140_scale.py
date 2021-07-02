@@ -1,5 +1,5 @@
 _base_ = [
-    '../model/fvnet_fv.py', '../dataset/fv-kitti-3d-car_620x190.py',
+    '../model/fvnet_fv.py', '../dataset/fv-kitti-3d-car_620x190_scale.py',
     '../../_base_/default_runtime.py'
 ]
 
@@ -18,7 +18,7 @@ test_cfg = dict(
 
 # optimizer
 # This schedule is mainly used by models on nuScenes dataset
-lr = 0.03
+lr = 0.001
 optimizer = dict(type='AdamW', lr=lr, weight_decay=0.01)
 # max_norm=10 is better for SECOND
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
@@ -27,7 +27,7 @@ lr_config = dict(
     warmup='linear',
     warmup_iters=1000,
     warmup_ratio=1.0 / 1000,
-    step=[200])
+    step=[70])
 momentum_config = None
 # runtime settings
 total_epochs = 200

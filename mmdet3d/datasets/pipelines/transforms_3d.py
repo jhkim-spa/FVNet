@@ -1047,3 +1047,79 @@ class PadFV(object):
         repr_str += f'size_divisor={self.size_divisor}, '
         repr_str += f'pad_val={self.pad_val})'
         return repr_str
+
+
+@PIPELINES.register_module()
+class ScalePoints(object):
+
+    def __init__(self,
+                 scale_ratio_range=[0.95, 1.05]):
+        self.scale_ratio_range = scale_ratio_range
+
+    def _scale_bbox_points(self, input_dict):
+
+        scale = input_dict['pcd_scale_factor']
+        fv = input_dict['fv']
+        fv[:, :, :3] *= scale
+        input_dict['fv'] = fv
+
+        for key in input_dict['bbox3d_fields']:
+            input_dict[key].scale(scale)
+
+    def _random_scale(self, input_dict):
+
+        scale_factor = np.random.uniform(self.scale_ratio_range[0],
+                                         self.scale_ratio_range[1])
+        input_dict['pcd_scale_factor'] = scale_factor
+
+    def __call__(self, input_dict):
+
+        self._random_scale(input_dict)
+        self._scale_bbox_points(input_dict)
+
+        return input_dict
+
+
+@PIPELINES.register_module()
+class RotPoints(object):
+
+    def __init__(self,
+                 rot_range=[-0.78539816, 0.78539816]):
+        self.rot_range = rot_range
+
+    def _rot_bbox_points(self, input_dict):
+
+        rotation = self.rot_range
+        if not isinstance(rotation, list):
+            rotation = [-rotation, rotation]
+        noise_rotation = np.random.uniform(rotation[0], rotation[1])
+        fv = input_dict['fv']
+
+        for key in input_dict['bbox3d_fields']:
+            if len(input_dict[key].tensor) != 0:
+                input_dict[key].rotate(noise_rotation)
+                fv, rot_mat_T = self._rotate(fv, noise_rotation)
+                input_dict['fv'] = fv
+                input_dict['pcd_rotation'] = rot_mat_T
+
+    def _rotate(self, fv, angle):
+        angle = np.array(angle, dtype=np.float32)
+        rot_sin = np.sin(angle)
+        rot_cos = np.cos(angle)
+        rot_mat_T = np.array([[rot_cos, -rot_sin, 0],
+                              [rot_sin, rot_cos, 0], [0, 0, 1]],
+                              dtype=np.float32)
+        fv = fv
+        idx = fv[:, :, 0].nonzero()
+        points = fv[:, :, :3][idx[0], idx[1], :]
+        points = points @ rot_mat_T
+        fv[:, :, :3][idx[0], idx[1], :] = points
+
+
+        return fv, rot_mat_T
+
+    def __call__(self, input_dict):
+
+        self._rot_bbox_points(input_dict)
+
+        return input_dict
