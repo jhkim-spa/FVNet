@@ -117,8 +117,9 @@ class FVNet(SingleStage3DDetector):
     
     def simple_test(self, fv, img_metas, img=None, rescale=False):
         """Test function without augmentaiton."""
+        fv = torch.stack(fv)
         feats, valid_coords = self.extract_feat(fv)
-        outs = self.bbox_head(feats)
+        outs = self.bbox_head(feats, [fv])
         bbox_list = self.bbox_head.get_bboxes(
             *outs, img_metas, valid_coords, rescale=rescale)
         bbox_results = [
