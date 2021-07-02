@@ -40,7 +40,6 @@ class FVNet(SingleStage3DDetector):
 
     def extract_feat(self, fv):
 
-        fv = torch.stack(fv)
         feats = self.backbone(fv)
         if self.with_neck:
             feats = self.neck(feats)
@@ -107,20 +106,21 @@ class FVNet(SingleStage3DDetector):
                       gt_bboxes_3d,
                       gt_labels_3d,
                       gt_bboxes_ignore=None):
-
+        fv = torch.stack(fv)
         feats, valid_coords = self.extract_feat(fv)
         outs = self.bbox_head(feats)
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
         losses = self.bbox_head.loss(
-            *loss_inputs, valid_coords, gt_bboxes_ignore=gt_bboxes_ignore)
+            *loss_inputs, valid_coords, fv[:, :3, :, :], gt_bboxes_ignore=gt_bboxes_ignore)
         return losses
     
     def simple_test(self, fv, img_metas, img=None, rescale=False):
         """Test function without augmentaiton."""
+        fv = torch.stack(fv)
         feats, valid_coords = self.extract_feat(fv)
         outs = self.bbox_head(feats)
         bbox_list = self.bbox_head.get_bboxes(
-            *outs, img_metas, valid_coords, rescale=rescale)
+            *outs[:-1], img_metas, valid_coords, rescale=rescale)
         bbox_results = [
             bbox3d2result(bboxes, scores, labels)
             for bboxes, scores, labels in bbox_list

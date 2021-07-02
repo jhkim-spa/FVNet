@@ -36,7 +36,8 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
                      loss_weight=1.0),
                  loss_bbox=dict(
                      type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
-                 loss_dir=dict(type='CrossEntropyLoss', loss_weight=0.2)):
+                 loss_dir=dict(type='CrossEntropyLoss', loss_weight=0.2),
+                 loss_aux=None):
         super().__init__()
         self.in_channels = in_channels
         self.num_classes = num_classes
@@ -65,6 +66,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         self.loss_cls = build_loss(loss_cls)
         self.loss_bbox = build_loss(loss_bbox)
         self.loss_dir = build_loss(loss_dir)
+        self.loss_aux = build_loss(loss_aux)
         self.fp16_enabled = False
 
         self.anchor_cfg = anchor_cfg
@@ -94,6 +96,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
         self.conv_reg = nn.Conv2d(self.feat_channels,
                                   self.num_anchors * self.box_code_size, 1)
+        self.conv_coord = nn.Conv2d(self.feat_channels, 3, 1)
         if self.use_direction_classifier:
             self.conv_dir_cls = nn.Conv2d(self.feat_channels,
                                           self.num_anchors * 2, 1)
@@ -103,6 +106,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         bias_cls = bias_init_with_prob(0.01)
         normal_init(self.conv_cls, std=0.01, bias=bias_cls)
         normal_init(self.conv_reg, std=0.01)
+        normal_init(self.conv_coord, std=0.01)
 
     def forward_single(self, x):
         """Forward function on a single-scale feature map.
@@ -117,10 +121,11 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         # valid_coords
         cls_score = self.conv_cls(x)
         bbox_pred = self.conv_reg(x)
+        coord_pred = self.conv_coord(x)
         dir_cls_preds = None
         if self.use_direction_classifier:
             dir_cls_preds = self.conv_dir_cls(x)
-        return cls_score, bbox_pred, dir_cls_preds
+        return cls_score, bbox_pred, dir_cls_preds, coord_pred
 
     def forward(self, feats):
         """Forward pass.
@@ -164,10 +169,12 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
              cls_scores,
              bbox_preds,
              dir_cls_preds,
+             coord_preds,
              gt_bboxes,
              gt_labels,
              input_metas,
              valid_coords,
+             input_coord,
              gt_bboxes_ignore=None):
         """Calculate losses.
 
@@ -218,11 +225,13 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             num_total_pos + num_total_neg if self.sampling else num_total_pos)
 
         # num_total_samples = None
-        losses_cls, losses_bbox, losses_dir = multi_apply(
+        losses_cls, losses_bbox, losses_dir, losses_aux = multi_apply(
             self.loss_single,
             valid_coords,
             cls_scores,
             bbox_preds,
+            coord_preds,
+            [input_coord],
             dir_cls_preds,
             labels_list,
             label_weights_list,
@@ -232,7 +241,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             dir_weights_list,
             num_total_samples=num_total_samples)
         return dict(
-            loss_cls=losses_cls, loss_bbox=losses_bbox, loss_dir=losses_dir)
+            loss_cls=losses_cls, loss_bbox=losses_bbox, loss_dir=losses_dir, loss_aux=losses_aux)
 
     def get_bboxes(self,
                    cls_scores,
@@ -416,7 +425,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
 
         return anchors_batch
 
-    def loss_single(self, valid_coords, cls_score, bbox_pred, dir_cls_preds, labels,
+    def loss_single(self, valid_coords, cls_score, bbox_pred, aux_preds, aux_target, dir_cls_preds, labels,
                     label_weights, bbox_targets, bbox_weights, dir_targets,
                     dir_weights, num_total_samples):
         """Calculate loss of Single-level results.
@@ -461,7 +470,24 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         # assert labels.max().item() <= self.num_classes
         loss_cls = self.loss_cls(
             cls_score, labels, label_weights, avg_factor=num_total_samples)
+        
+        # aux
+        aux_preds = aux_preds.permute(0, 2, 3, 1)
+        aux_pred_list = []
+        for i in range(batch_size):
+            batch_idx = valid_coords['2d'][:, 0] == i
+            aux_pred_list.append(aux_preds[i, valid_coords['2d'][batch_idx][:, 1],
+                valid_coords['2d'][batch_idx][:, 2], :].reshape(-1, 3))
+        aux_preds = torch.cat(aux_pred_list)
 
+        aux_target = aux_target.permute(0, 2, 3, 1)
+        aux_target_list = []
+        for i in range(batch_size):
+            batch_idx = valid_coords['2d'][:, 0] == i
+            aux_target_list.append(aux_target[i, valid_coords['2d'][batch_idx][:, 1],
+                valid_coords['2d'][batch_idx][:, 2], :].reshape(-1, 3))
+        aux_target = torch.cat(aux_target_list)
+        loss_aux = self.loss_aux(aux_preds, aux_target, avg_factor=aux_preds.reshape(-1).shape[0])
         # regression loss
         bbox_pred = bbox_pred.permute(0, 2, 3, 1)
         bbox_pred_list = []
@@ -524,7 +550,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             if self.use_direction_classifier:
                 loss_dir = pos_dir_cls_preds.sum()
 
-        return loss_cls, loss_bbox, loss_dir
+        return loss_cls, loss_bbox, loss_dir, loss_aux
 
     def anchor_target_3d(self,
                          anchor_list,
