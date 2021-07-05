@@ -19,9 +19,11 @@ from mmdet3d.core import Box3DMode, show_result
 class FVNet(SingleStage3DDetector):
 
     def __init__(self,
+                 fusion_mode=None,
                  depth_wise=True,
                  depth_range=(0, 20, 40, 60, 80),
                  backbone=None,
+                 backbone_img=None,
                  neck=None,
                  bbox_head=None,
                  train_cfg=None,
@@ -35,13 +37,25 @@ class FVNet(SingleStage3DDetector):
             test_cfg=test_cfg,
             pretrained=pretrained,
         )
+        self.fusion_mode = fusion_mode
         self.depth_wise = depth_wise
         self.depth_range = depth_range
+        if backbone_img is not None:
+            self.backbone_img = build_backbone(backbone_img)
 
-    def extract_feat(self, fv):
-
-        fv = torch.stack(fv)
-        feats = self.backbone(fv)
+    def extract_feat(self, fv, img=None):
+        
+        if self.fusion_mode is None:
+            feats = self.backbone(fv)
+        elif self.fusion_mode == 'concat_input':
+            inputs = torch.cat((fv, img), dim=1)
+            feats = self.backbone(inputs)
+        elif self.fusion_mode in ['concat_feat', 'sum', 'weighted_sum']:
+            feats = self.backbone(fv)
+            feats_img = self.backbone_img(img)
+            if self.fusion_mode == 'concat_feat':
+                feats = [torch.cat((feat, feat_img), dim=1) for feat, feat_img\
+                    in zip(feats, feats_img)]
         if self.with_neck:
             feats = self.neck(feats)
 
@@ -106,9 +120,10 @@ class FVNet(SingleStage3DDetector):
                       img_metas,
                       gt_bboxes_3d,
                       gt_labels_3d,
+                      img=None,
                       gt_bboxes_ignore=None):
-
-        feats, valid_coords = self.extract_feat(fv)
+        fv = torch.stack(fv)
+        feats, valid_coords = self.extract_feat(fv, img)
         outs = self.bbox_head(feats)
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
         losses = self.bbox_head.loss(
@@ -117,7 +132,8 @@ class FVNet(SingleStage3DDetector):
     
     def simple_test(self, fv, img_metas, img=None, rescale=False):
         """Test function without augmentaiton."""
-        feats, valid_coords = self.extract_feat(fv)
+        fv = torch.stack(fv)
+        feats, valid_coords = self.extract_feat(fv, img)
         outs = self.bbox_head(feats)
         bbox_list = self.bbox_head.get_bboxes(
             *outs, img_metas, valid_coords, rescale=rescale)

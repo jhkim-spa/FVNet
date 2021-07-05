@@ -80,13 +80,14 @@ class OutConv(nn.Module):
 
 @BACKBONES.register_module()
 class UNet(nn.Module):
-    def __init__(self, n_channels, num_outs, outconv=True, n_classes=1, bilinear=True):
+    def __init__(self, n_channels, num_outs, outconv=True, n_classes=1, bilinear=True, concat=False):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.num_outs = num_outs
         self.outconv = outconv
         self.n_classes = n_classes
         self.bilinear = bilinear
+        self.concat = concat
 
         self.inc = DoubleConv(n_channels, 64)
         self.down1 = Down(64, 128)
@@ -97,7 +98,10 @@ class UNet(nn.Module):
         self.up1 = Up(1024, 512 // factor, bilinear)
         self.up2 = Up(512, 256 // factor, bilinear)
         self.up3 = Up(256, 128 // factor, bilinear)
-        self.up4 = Up(128, 64, bilinear)
+        if self.concat:
+            self.up4 = Up(128+3, 64, bilinear)
+        else:
+            self.up4 = Up(128, 64, bilinear)
         self.outc = OutConv(64, n_classes)
 
         self.outc1 = nn.Conv2d(256, 64, 1)
@@ -112,6 +116,9 @@ class UNet(nn.Module):
         x11 = self.up1(x5, x4)
         x22 = self.up2(x11, x3)
         x33 = self.up3(x22, x2)
+
+        if self.concat:
+            x1 = torch.cat((x1, x[:, :3]), 1)
         x44 = self.up4(x33, x1)
 
         out1 = x11
@@ -122,6 +129,8 @@ class UNet(nn.Module):
         if self.outconv:
             out1 = self.outc1(out1)
             out2 = self.outc2(out2)
+        if self.concat:
+            out4 = torch.cat((out4, x[:, :3]), 1)
 
         outs = [out1, out2, out3, out4]
         outs = outs[-self.num_outs:]

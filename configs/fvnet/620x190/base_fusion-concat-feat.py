@@ -1,7 +1,20 @@
 _base_ = [
-    '../model/fvnet_fv.py', '../dataset/fv-kitti-3d-car_620x190.py',
+    '../model/fvnet_fv.py', '../dataset/fv-kitti-3d-car_620x190_fusion.py',
     '../../_base_/default_runtime.py'
 ]
+
+model = dict(
+    fusion_mode='concat_feat',
+    backbone=dict(concat=True, outconv=False),
+    bbox_head=dict(feat_channels=131),
+    backbone_img=dict(
+        type='UNet',
+        num_outs=1,
+        n_channels=3,
+        concat=False,
+        outconv=False
+    )
+)
 
 train_cfg = dict(
     assigner=dict(type='InBoxAssigner'),
@@ -18,18 +31,18 @@ test_cfg = dict(
 
 # optimizer
 # This schedule is mainly used by models on nuScenes dataset
-lr = 0.001
+# lr = 0.003
+lr = 0.0015
 optimizer = dict(type='AdamW', lr=lr, weight_decay=0.01)
 # max_norm=10 is better for SECOND
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 lr_config = dict(
     policy='step',
-    warmup='linear',
-    warmup_iters=1000,
-    warmup_ratio=1.0 / 1000,
-    step=[70, 150])
+    warmup=None,
+    step=[134, 183])
 momentum_config = None
 # runtime settings
 total_epochs = 200
 
-data = dict(samples_per_gpu=16)
+# data = dict(samples_per_gpu=16)
+data = dict(samples_per_gpu=8)

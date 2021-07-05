@@ -90,7 +90,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
 
     def _init_layers(self):
         """Initialize neural network layers of the head."""
-        self.cls_out_channels = self.num_anchors * self.num_classes
+        self.cls_out_channels = self.num_classes * self.num_anchors
         self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
         self.conv_reg = nn.Conv2d(self.feat_channels,
                                   self.num_anchors * self.box_code_size, 1)
@@ -360,7 +360,8 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
                 scores = scores[topk_inds, :]
                 dir_cls_score = dir_cls_score[topk_inds]
 
-            bboxes = self.bbox_coder.decode(anchors, bbox_pred)
+            bboxes = self.bbox_coder.decode(anchors, bbox_pred,
+                                            normalize=self.bbox_coder.normalize)
             mlvl_bboxes.append(bboxes)
             mlvl_scores.append(scores)
             mlvl_dir_scores.append(dir_cls_score)
@@ -456,9 +457,10 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             batch_idx = valid_coords['2d'][:, 0] == i
             cls_score_list.append(cls_score[i, valid_coords['2d'][batch_idx][:, 1],
                 valid_coords['2d'][batch_idx][:, 2], :].reshape(-1, self.num_classes))
-        cls_score = torch.cat(cls_score_list)
+        cls_score = torch.cat(cls_score_list).contiguous()
         # cls_score = cls_score.reshape(-1, self.num_classes)
         # assert labels.max().item() <= self.num_classes
+
         loss_cls = self.loss_cls(
             cls_score, labels, label_weights, avg_factor=num_total_samples)
 
