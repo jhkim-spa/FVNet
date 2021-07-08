@@ -80,7 +80,8 @@ class OutConv(nn.Module):
 
 @BACKBONES.register_module()
 class UNet(nn.Module):
-    def __init__(self, n_channels, num_outs, outconv=True, n_classes=1, bilinear=True, concat=False):
+    def __init__(self, n_channels, num_outs, outconv=True,
+                 n_classes=1, bilinear=True, concat=False, half_channel=False):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.num_outs = num_outs
@@ -88,24 +89,40 @@ class UNet(nn.Module):
         self.n_classes = n_classes
         self.bilinear = bilinear
         self.concat = concat
+        if half_channel:
+            self.inc = DoubleConv(n_channels, 32)
+            self.down1 = Down(32, 64)
+            self.down2 = Down(64, 128)
+            self.down3 = Down(128, 256)
+            factor = 2 if bilinear else 1
+            self.down4 = Down(256, 512 // factor)
+            self.up1 = Up(512, 256 // factor, bilinear)
+            self.up2 = Up(256, 128 // factor, bilinear)
+            self.up3 = Up(128, 64 // factor, bilinear)
+            if self.concat:
+                self.up4 = Up(64+3, 32, bilinear)
+            else:
+                self.up4 = Up(64, 32, bilinear)
+            self.outc = OutConv(32, n_classes)
 
-        self.inc = DoubleConv(n_channels, 64)
-        self.down1 = Down(64, 128)
-        self.down2 = Down(128, 256)
-        self.down3 = Down(256, 512)
-        factor = 2 if bilinear else 1
-        self.down4 = Down(512, 1024 // factor)
-        self.up1 = Up(1024, 512 // factor, bilinear)
-        self.up2 = Up(512, 256 // factor, bilinear)
-        self.up3 = Up(256, 128 // factor, bilinear)
-        if self.concat:
-            self.up4 = Up(128+3, 64, bilinear)
+            self.outc1 = nn.Conv2d(128, 32, 1)
+            self.outc2 = nn.Conv2d(64, 32, 1)
         else:
-            self.up4 = Up(128, 64, bilinear)
-        self.outc = OutConv(64, n_classes)
-
-        self.outc1 = nn.Conv2d(256, 64, 1)
-        self.outc2 = nn.Conv2d(128, 64, 1)
+            self.inc = DoubleConv(n_channels, 64)
+            self.down1 = Down(64, 128)
+            self.down2 = Down(128, 256)
+            self.down3 = Down(256, 512)
+            factor = 2 if bilinear else 1
+            self.down4 = Down(512, 1024 // factor)
+            self.up1 = Up(1024, 512 // factor, bilinear)
+            self.up2 = Up(512, 256 // factor, bilinear)
+            self.up3 = Up(256, 128 // factor, bilinear)
+            if self.concat:
+                self.up4 = Up(128+3, 64, bilinear)
+            else:
+                self.up4 = Up(128, 64, bilinear)
+            self.outc1 = nn.Conv2d(256, 64, 1)
+            self.outc2 = nn.Conv2d(128, 64, 1)
 
     def forward(self, x):
         x1 = self.inc(x)

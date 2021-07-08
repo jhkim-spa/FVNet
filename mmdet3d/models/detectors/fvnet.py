@@ -42,20 +42,30 @@ class FVNet(SingleStage3DDetector):
         self.depth_range = depth_range
         if backbone_img is not None:
             self.backbone_img = build_backbone(backbone_img)
+        self.conv_L = nn.Conv2d(bbox_head['feat_channels'], 1, 3, padding=1)
+        self.conv_C = nn.Conv2d(bbox_head['feat_channels'], 1, 3, padding=1)
 
     def extract_feat(self, fv, img=None):
-        
         if self.fusion_mode is None:
             feats = self.backbone(fv)
         elif self.fusion_mode == 'concat_input':
             inputs = torch.cat((fv, img), dim=1)
             feats = self.backbone(inputs)
-        elif self.fusion_mode in ['concat_feat', 'sum', 'weighted_sum']:
-            feats = self.backbone(fv)
-            feats_img = self.backbone_img(img)
+        elif self.fusion_mode in ['concat_feat', 'gate']:
+            feats_L = self.backbone(fv)
+            feats_C = self.backbone_img(img)
             if self.fusion_mode == 'concat_feat':
-                feats = [torch.cat((feat, feat_img), dim=1) for feat, feat_img\
-                    in zip(feats, feats_img)]
+                feats = [torch.cat((feat_L, feat_C), dim=1) for feat_L, feat_C\
+                    in zip(feats_L, feats_C)]
+            elif self.fusion_mode == 'gate':
+                feats = [torch.cat((feat_L, feat_C), dim=1) for feat_L, feat_C\
+                    in zip(feats_L, feats_C)]
+                feats_L = [feat_L * (self.conv_L(feat).sigmoid()) for feat, feat_L\
+                    in zip(feats, feats_L)]
+                feats_C = [feat_C * (self.conv_C(feat).sigmoid()) for feat, feat_C\
+                    in zip(feats, feats_C)]
+                feats = [torch.cat((feat_L, feat_C), dim=1) for feat_L, feat_C\
+                    in zip(feats_L, feats_C)]
         if self.with_neck:
             feats = self.neck(feats)
 

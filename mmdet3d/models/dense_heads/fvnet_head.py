@@ -22,6 +22,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
                  in_channels,
                  train_cfg,
                  test_cfg,
+                 shared_conv=False,
                  feat_channels=256,
                  use_direction_classifier=True,
                  assigner_per_size=False,
@@ -41,6 +42,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
         self.in_channels = in_channels
         self.num_classes = num_classes
         self.feat_channels = feat_channels
+        self.shared_conv = shared_conv
         self.diff_rad_by_sin = diff_rad_by_sin
         self.use_direction_classifier = use_direction_classifier
         self.train_cfg = train_cfg
@@ -91,12 +93,24 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
     def _init_layers(self):
         """Initialize neural network layers of the head."""
         self.cls_out_channels = self.num_classes * self.num_anchors
-        self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
-        self.conv_reg = nn.Conv2d(self.feat_channels,
-                                  self.num_anchors * self.box_code_size, 1)
-        if self.use_direction_classifier:
-            self.conv_dir_cls = nn.Conv2d(self.feat_channels,
-                                          self.num_anchors * 2, 1)
+        if self.shared_conv:
+            self.conv_shared = nn.Sequential(
+                nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
+                nn.Conv2d(self.feat_channels, int(self.feat_channels / 2), 3, padding=1))
+            self.feat_channels = int(self.feat_channels / 2)
+            self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
+            self.conv_reg = nn.Conv2d(self.feat_channels,
+                                    self.num_anchors * self.box_code_size, 1)
+            if self.use_direction_classifier:
+                self.conv_dir_cls = nn.Conv2d(self.feat_channels,
+                                            self.num_anchors * 2, 1)
+        else:
+            self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
+            self.conv_reg = nn.Conv2d(self.feat_channels,
+                                    self.num_anchors * self.box_code_size, 1)
+            if self.use_direction_classifier:
+                self.conv_dir_cls = nn.Conv2d(self.feat_channels,
+                                            self.num_anchors * 2, 1)
 
     def init_weights(self):
         """Initialize the weights of head."""
@@ -115,6 +129,8 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
                 regression and direction classification predictions.
         """
         # valid_coords
+        if self.shared_conv:
+            x = self.conv_shared(x)
         cls_score = self.conv_cls(x)
         bbox_pred = self.conv_reg(x)
         dir_cls_preds = None
