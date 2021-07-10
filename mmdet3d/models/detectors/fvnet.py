@@ -19,6 +19,7 @@ from mmdet3d.core import Box3DMode, show_result
 class FVNet(SingleStage3DDetector):
 
     def __init__(self,
+                 use_anchor=False,
                  fusion_mode=None,
                  depth_wise=True,
                  depth_range=(0, 20, 40, 60, 80),
@@ -37,6 +38,7 @@ class FVNet(SingleStage3DDetector):
             test_cfg=test_cfg,
             pretrained=pretrained,
         )
+        self.use_anchor = use_anchor
         self.fusion_mode = fusion_mode
         self.depth_wise = depth_wise
         self.depth_range = depth_range
@@ -68,6 +70,8 @@ class FVNet(SingleStage3DDetector):
                     in zip(feats_L, feats_C)]
         if self.with_neck:
             feats = self.neck(feats)
+        if self.use_anchor:
+            return feats, None
 
         valid_coords = dict()
         valid_coords_2d = torch.nonzero(fv[:, -1, :, :])
@@ -136,8 +140,12 @@ class FVNet(SingleStage3DDetector):
         feats, valid_coords = self.extract_feat(fv, img)
         outs = self.bbox_head(feats)
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
-        losses = self.bbox_head.loss(
-            *loss_inputs, valid_coords, gt_bboxes_ignore=gt_bboxes_ignore)
+        if valid_coords is not None:
+            losses = self.bbox_head.loss(
+                *loss_inputs, valid_coords, gt_bboxes_ignore=gt_bboxes_ignore)
+        else:
+            losses = self.bbox_head.loss(
+                *loss_inputs, gt_bboxes_ignore=gt_bboxes_ignore)
         return losses
     
     def simple_test(self, fv, img_metas, img=None, rescale=False):
