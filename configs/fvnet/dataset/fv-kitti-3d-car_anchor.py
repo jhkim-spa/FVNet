@@ -4,6 +4,13 @@ class_names = ['Car']
 point_cloud_range = [0, -40, -3, 80, 40, 1]
 input_modality = dict(use_lidar=True, use_camera=False)
 file_client_args = dict(backend='disk')
+db_sampler = dict(
+    data_root=data_root,
+    info_path=data_root + 'kitti_dbinfos_train.pkl',
+    rate=1.0,
+    prepare=dict(filter_by_difficulty=[-1], filter_by_min_points=dict(Car=5)),
+    classes=class_names,
+    sample_groups=dict(Car=15))
 
 train_pipeline = [
     dict(
@@ -17,6 +24,7 @@ train_pipeline = [
         with_bbox_3d=True,
         with_label_3d=True,
         file_client_args=file_client_args),
+    # dict(type='ObjectSample', db_sampler=db_sampler),
     dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
@@ -82,6 +90,7 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'kitti_infos_val.pkl',
+        # ann_file=data_root + 'kitti_infos_train.pkl',
         # ann_file=data_root + 'kitti_infos_debug.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
@@ -95,6 +104,7 @@ data = dict(
         data_root=data_root,
         ann_file=data_root + 'kitti_infos_val.pkl',
         # ann_file=data_root + 'kitti_infos_debug.pkl',
+        # ann_file=data_root + 'kitti_infos_train.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
@@ -103,4 +113,4 @@ data = dict(
         test_mode=True,
         box_type_3d='LiDAR'))
 
-evaluation = dict(interval=1)
+evaluation = dict(interval=2)

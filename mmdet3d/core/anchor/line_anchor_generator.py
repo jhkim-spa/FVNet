@@ -40,12 +40,17 @@ class LineAnchorGenerator(object):
         self.cached_anchors = None
         self.reshape_out = reshape_out
         self.size_per_range = size_per_range
-        self. multi_level_anchors = None
+        self.multi_level_anchors = None
 
         self.box_type_3d, self.box_mode_3d = get_box_type('LiDAR')
-        self.cam2lidar = torch.tensor([[2.3477350e-04,  1.0449406e-02,  9.9994540e-01,  2.7290344e-01],
-            [-9.9994421e-01,  1.0565354e-02,  1.2436594e-04, -1.9692658e-03],
-            [-1.0563478e-02, -9.9988955e-01,  1.0451305e-02, -7.2285898e-02],
+        # self.cam2lidar = torch.tensor([[2.3477350e-04,  1.0449406e-02,  9.9994540e-01,  2.7290344e-01],
+        #     [-9.9994421e-01,  1.0565354e-02,  1.2436594e-04, -1.9692658e-03],
+        #     [-1.0563478e-02, -9.9988955e-01,  1.0451305e-02, -7.2285898e-02],
+        #     [ 0.0000000e+00,  0.0000000e+00,  0.0000000e+00,  1.0000000e+00]],
+        #     dtype=torch.float32)
+        self.cam2lidar = torch.tensor([[ 7.5337449e-03,  1.4802488e-02,  9.9986202e-01,  2.7290344e-01],
+            [-9.9997145e-01,  7.2807324e-04,  7.5237905e-03, -1.9692658e-03],
+            [-6.1660202e-04, -9.9989015e-01,  1.4807552e-02, -7.2285898e-02],
             [ 0.0000000e+00,  0.0000000e+00,  0.0000000e+00,  1.0000000e+00]],
             dtype=torch.float32)
 
@@ -87,21 +92,24 @@ class LineAnchorGenerator(object):
                 num_base_anchors is the number of anchors for that level.
         """
         if self.multi_level_anchors is not None:
-            return self.multi_level_anchors
+            return self.multi_level_anchors, self.multi_level_val_masks
         assert self.num_levels == len(featmap_sizes)
         multi_level_anchors = []
+        multi_level_val_masks = []
         dist_list = []
         for i in range(self.num_levels):
             dist_list.append(self.dist_list[i*self.num_bins:(i+1)*self.num_bins]) 
         dist_list.reverse()
         for i in range(self.num_levels):
-            anchors = self.single_level_grid_anchors(
+            anchors, val_masks = self.single_level_grid_anchors(
                 featmap_sizes[i], dist_list[i], self.scales[i], device=device)
             if self.reshape_out:
                 anchors = anchors.reshape(-1, anchors.size(-1))
             multi_level_anchors.append(anchors)
+            multi_level_val_masks.append(val_masks)
         self.multi_level_anchors = multi_level_anchors
-        return multi_level_anchors
+        self.multi_level_val_masks = multi_level_val_masks
+        return multi_level_anchors, multi_level_val_masks
 
     def single_level_grid_anchors(self, featmap_size, dist_list,
                                   scale, device='cuda'):
@@ -132,18 +140,21 @@ class LineAnchorGenerator(object):
                 device=device)
 
         mr_anchors = []
+        mr_val_masks = []
         for anchor_range, anchor_size in zip(self.ranges, self.sizes):
-            mr_anchors.append(
-                self.anchors_single_range(
-                    featmap_size,
-                    dist_list,
-                    anchor_range,
-                    scale,
-                    anchor_size,
-                    self.rotations,
-                    device=device))
+            mr_anchor, mr_val_mask = self.anchors_single_range(
+                                        featmap_size,
+                                        dist_list,
+                                        anchor_range,
+                                        scale,
+                                        anchor_size,
+                                        self.rotations,
+                                        device=device)
+            mr_anchors.append(mr_anchor)
+            mr_val_masks.append(mr_val_mask)
         mr_anchors = torch.cat(mr_anchors, dim=-3)
-        return mr_anchors
+        mr_val_masks = torch.cat(mr_val_masks, dim=-2)
+        return mr_anchors, mr_val_masks
 
     def anchors_single_range(self,
                              feature_size,
@@ -158,6 +169,7 @@ class LineAnchorGenerator(object):
         # 2. Multi-class
         # 3. filtering with anchor_range
         anchors = []
+        val_masks = []
         sizes = torch.tensor(sizes).reshape(-1, 3)
         rotations = torch.tensor(rotations).reshape(-1, 1)
         for dist in dist_list:
@@ -171,22 +183,54 @@ class LineAnchorGenerator(object):
             rotation = rotations.repeat(num_centers, 1)
             anchor = torch.cat((center, size, rotation), dim=1)
             anchor = anchor.reshape(-1, 2, 7)
+
+            # import matplotlib.pyplot as plt
+            # anchor = anchor.cpu()
+            # plt.scatter(anchor[..., 2], -anchor[..., 0], s=0.1)
+            # plt.savefig('test_.png')
+
             anchor = self.convert_cam2lidar(anchor)
+            anchor[..., 2] = anchor[..., 2] - anchor[..., 5] / 2
+            val_mask = (anchor[..., 0] >= anchor_range[0]) &\
+                       (anchor[..., 0] <= anchor_range[3]) &\
+                       (anchor[..., 1] >= anchor_range[1]) &\
+                       (anchor[..., 1] <= anchor_range[4]) &\
+                       (anchor[..., 2] >= anchor_range[2]) &\
+                       (anchor[..., 2] <= anchor_range[5])
+            # anchor[..., 2] = -1.78
+            # val_mask = anchor[..., 0] > -100000
             anchors.append(anchor)
+            val_masks.append(val_mask)
         anchors = torch.stack(anchors)
         anchors = anchors.permute(1, 0, 2, 3)
         anchors = anchors.reshape(1, *feature_size, 1, -1, 7)
+        val_masks = torch.stack(val_masks)
+        val_masks = val_masks.permute(1, 0, 2)
+        val_masks = val_masks.reshape(1, *feature_size, 1, -1)
 
-        return anchors
+        return anchors, val_masks
 
     def convert_cam2lidar(self, boxes):
-        boxes = boxes.reshape(-1, 7)
-        boxes[:, [3, 4, 5]] = boxes[:, [4, 5, 3]]
-        boxes = boxes.contiguous()
-        boxes = CameraInstance3DBoxes(boxes).convert_to(self.box_mode_3d,
-            self.cam2lidar)
+        # boxes = boxes.reshape(-1, 7)
+        # boxes[:, [3, 4, 5]] = boxes[:, [4, 5, 3]]
+        # boxes = boxes.contiguous()
+        # boxes = CameraInstance3DBoxes(boxes).convert_to(self.box_mode_3d,
+        #     self.cam2lidar)
         
-        boxes = boxes.tensor.reshape(-1, 2, 7)
+        # boxes = boxes.tensor.reshape(-1, 2, 7)
+
+        boxes = boxes.reshape(-1, 7)
+        boxes[:, [0, 1, 2]] = boxes[:, [2, 0, 1]]
+        boxes[:, [1, 2]] = -boxes[:, [1, 2]]
+
+        # cam2 to cam0
+        boxes[:, 1] += 0.06
+        # cam0 to velo
+        boxes[:, 2] -= 0.08
+        boxes[:, 0] += 0.27
+
+        # boxes = boxes.tensor.reshape(-1, 2, 7)
+        boxes = boxes.reshape(-1, 2, 7)
         return boxes
 
     def get_ref_points(self, height, width):

@@ -161,13 +161,14 @@ class FVNetAnchorHead(nn.Module, AnchorTrainMixin):
         num_imgs = len(input_metas)
         # since feature map sizes of all images are the same, we only compute
         # anchors for one time
-        multi_level_anchors = self.anchor_generator.grid_anchors(
+        multi_level_anchors, val_masks = self.anchor_generator.grid_anchors(
             featmap_sizes, device=device)
         multi_level_anchors = [res.to(device) for res in multi_level_anchors]
         anchor_list = [multi_level_anchors for _ in range(num_imgs)]
-        return anchor_list
+        val_masks_list = [val_masks for _ in range(num_imgs)]
+        return anchor_list, val_masks_list
     
-    def loss_single(self, cls_score, bbox_pred, dir_cls_preds, labels,
+    def loss_single(self, val_mask, cls_score, bbox_pred, dir_cls_preds, labels,
                     label_weights, bbox_targets, bbox_weights, dir_targets,
                     dir_weights, num_total_samples):
         """Calculate loss of Single-level results.
@@ -190,11 +191,16 @@ class FVNetAnchorHead(nn.Module, AnchorTrainMixin):
                 and direction, respectively.
         """
         # classification loss
+        val_mask = [val_mask] * cls_score.shape[0]
+        val_mask = torch.cat(val_mask, dim=0)
+        val_mask = val_mask.reshape(*val_mask.shape[:3], -1)
         if num_total_samples is None:
             num_total_samples = int(cls_score.shape[0])
         labels = labels.reshape(-1)
         label_weights = label_weights.reshape(-1)
         cls_score = cls_score.permute(0, 2, 3, 1).reshape(-1, self.num_classes)
+        val_mask = val_mask.reshape(-1, self.num_classes)
+        cls_score = cls_score[val_mask].reshape(-1, self.num_classes)
         assert labels.max().item() <= self.num_classes
         loss_cls = self.loss_cls(
             cls_score, labels, label_weights, avg_factor=num_total_samples)
@@ -202,6 +208,7 @@ class FVNetAnchorHead(nn.Module, AnchorTrainMixin):
         # regression loss
         bbox_pred = bbox_pred.permute(0, 2, 3,
                                       1).reshape(-1, self.box_code_size)
+        bbox_pred = bbox_pred[val_mask[:, 0]]
         bbox_targets = bbox_targets.reshape(-1, self.box_code_size)
         bbox_weights = bbox_weights.reshape(-1, self.box_code_size)
 
@@ -217,6 +224,7 @@ class FVNetAnchorHead(nn.Module, AnchorTrainMixin):
         # dir loss
         if self.use_direction_classifier:
             dir_cls_preds = dir_cls_preds.permute(0, 2, 3, 1).reshape(-1, 2)
+            dir_cls_preds = dir_cls_preds[val_mask[:, 0]]
             dir_targets = dir_targets.reshape(-1)
             dir_weights = dir_weights.reshape(-1)
             pos_dir_cls_preds = dir_cls_preds[pos_inds]
@@ -311,8 +319,37 @@ class FVNetAnchorHead(nn.Module, AnchorTrainMixin):
         featmap_sizes = [featmap.size()[-2:] for featmap in cls_scores]
         assert len(featmap_sizes) == self.anchor_generator.num_levels
         device = cls_scores[0].device
-        anchor_list = self.get_anchors(
+        anchor_list, val_mask_list = self.get_anchors(
             featmap_sizes, input_metas, device=device)
+
+        # # Plot anchor centers
+        # import matplotlib.pyplot as plt
+        # for anchor, mask in zip(anchor_list[0], val_mask_list[0]):
+        #     anchor = anchor.cpu()
+        #     mask = mask.cpu()
+        #     anchor = anchor[mask.reshape(-1)]
+        #     plt.scatter(anchor[..., 1], anchor[..., 0], s=0.01)
+        # plt.savefig('test1.png')
+        # plt.cla()
+        # for anchor, mask in zip(anchor_list[0], val_mask_list[0]):
+        #     anchor = anchor.cpu()
+        #     mask = mask.cpu()
+        #     anchor = anchor[mask.reshape(-1)]
+        #     plt.scatter(anchor[..., 0], anchor[..., 2], s=0.1)
+        # plt.ylim(-2, -1)
+        # plt.savefig('test2.png')
+        # plt.cla()
+        # for anchor, mask in zip(anchor_list[0], val_mask_list[0]):
+        #     anchor = anchor.cpu()
+        #     mask = mask.cpu()
+        #     anchor = anchor[mask.reshape(-1)]
+        #     plt.scatter(anchor[..., 1], anchor[..., 2], s=0.1)
+        # plt.savefig('test3.png')
+        # plt.cla()
+
+        anchor_list = [[anchor[mask.reshape(-1)] for anchor, mask\
+            in zip(anchor_list[i], val_mask_list[i])]\
+            for i in range(len(anchor_list))]
         label_channels = self.cls_out_channels if self.use_sigmoid_cls else 1
         cls_reg_targets = self.anchor_target_3d(
             anchor_list,
@@ -335,6 +372,7 @@ class FVNetAnchorHead(nn.Module, AnchorTrainMixin):
         # num_total_samples = None
         losses_cls, losses_bbox, losses_dir = multi_apply(
             self.loss_single,
+            val_mask_list[0],
             cls_scores,
             bbox_preds,
             dir_cls_preds,
@@ -374,8 +412,12 @@ class FVNetAnchorHead(nn.Module, AnchorTrainMixin):
         num_levels = len(cls_scores)
         featmap_sizes = [cls_scores[i].shape[-2:] for i in range(num_levels)]
         device = cls_scores[0].device
-        mlvl_anchors = self.anchor_generator.grid_anchors(
-            featmap_sizes, device=device)
+        mlvl_anchors, val_masks = self.get_anchors(featmap_sizes, input_metas,
+                                                   device=device)
+        mlvl_anchors, val_masks = mlvl_anchors[0], val_masks[0]
+        mlvl_anchors = [res.to(device) for res in mlvl_anchors]
+        # mlvl_anchors = self.anchor_generator.grid_anchors(
+        #     featmap_sizes, device=device)
         mlvl_anchors = [
             anchor.reshape(-1, self.box_code_size) for anchor in mlvl_anchors
         ]
@@ -393,13 +435,14 @@ class FVNetAnchorHead(nn.Module, AnchorTrainMixin):
             ]
 
             input_meta = input_metas[img_id]
-            proposals = self.get_bboxes_single(cls_score_list, bbox_pred_list,
+            proposals = self.get_bboxes_single(val_masks, cls_score_list, bbox_pred_list,
                                                dir_cls_pred_list, mlvl_anchors,
                                                input_meta, cfg, rescale)
             result_list.append(proposals)
         return result_list
 
     def get_bboxes_single(self,
+                          val_masks,
                           cls_scores,
                           bbox_preds,
                           dir_cls_preds,
@@ -432,21 +475,26 @@ class FVNetAnchorHead(nn.Module, AnchorTrainMixin):
         mlvl_bboxes = []
         mlvl_scores = []
         mlvl_dir_scores = []
-        for cls_score, bbox_pred, dir_cls_pred, anchors in zip(
-                cls_scores, bbox_preds, dir_cls_preds, mlvl_anchors):
+        for cls_score, bbox_pred, dir_cls_pred, anchors, val_mask in zip(
+                cls_scores, bbox_preds, dir_cls_preds, mlvl_anchors, val_masks):
             assert cls_score.size()[-2:] == bbox_pred.size()[-2:]
             assert cls_score.size()[-2:] == dir_cls_pred.size()[-2:]
+            val_mask = val_mask.reshape(-1)
+            anchors = anchors[val_mask]
             dir_cls_pred = dir_cls_pred.permute(1, 2, 0).reshape(-1, 2)
+            dir_cls_pred = dir_cls_pred[val_mask]
             dir_cls_score = torch.max(dir_cls_pred, dim=-1)[1]
 
             cls_score = cls_score.permute(1, 2,
                                           0).reshape(-1, self.num_classes)
+            cls_score = cls_score[val_mask]
             if self.use_sigmoid_cls:
                 scores = cls_score.sigmoid()
             else:
                 scores = cls_score.softmax(-1)
             bbox_pred = bbox_pred.permute(1, 2,
                                           0).reshape(-1, self.box_code_size)
+            bbox_pred = bbox_pred[val_mask]
 
             nms_pre = cfg.get('nms_pre', -1)
             if nms_pre > 0 and scores.shape[0] > nms_pre:
