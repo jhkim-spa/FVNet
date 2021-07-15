@@ -3,7 +3,6 @@ dataset_type = 'KittiDataset'
 data_root = 'data/kitti/'
 class_names = ['Car']
 point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1]
-# point_cloud_range = [0, -40, -3, 70.4, 40, 1]
 input_modality = dict(use_lidar=True, use_camera=False)
 file_client_args = dict(backend='disk')
 
@@ -111,7 +110,7 @@ model = dict(
     type='FVNet',
     voxel_layer=dict(
         max_num_points=5,
-        point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1],
+        point_cloud_range=point_cloud_range,
         voxel_size=voxel_size,
         max_voxels=(16000, 40000)),
     voxel_encoder=dict(
@@ -120,7 +119,7 @@ model = dict(
         feat_channels=[64],
         with_distance=False,
         voxel_size=voxel_size,
-        point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1]),
+        point_cloud_range=point_cloud_range),
     middle_encoder=dict(
         type='PointPillarsScatter', in_channels=64, output_shape=[496, 432]),
     backbone_bev=dict(

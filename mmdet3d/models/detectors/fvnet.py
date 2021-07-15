@@ -74,6 +74,7 @@ class FVNet(SingleStage3DDetector):
 
     def extract_feat(self, fv, img=None, points=None):
         if points is not None: # fv feature + bev feature
+            fv_src = fv.clone()
             voxels, num_points, coors = self.voxelize(points)
             voxel_features = self.voxel_encoder(voxels, num_points, coors)
             batch_size = coors[-1, 0].item() + 1
@@ -97,8 +98,9 @@ class FVNet(SingleStage3DDetector):
             y_range = point_cloud_range[4] - point_cloud_range[1]
 
             bev_size = feats_bev.shape[2:]
-            bev_coords = fv[:, :2, :, :].clone()
-            k = [bev_size[0] / x_range, bev_size[1] / y_range]
+            bev_coords = fv_src[:, :2, :, :].clone()
+            k = [bev_size[1] / x_range, bev_size[0] / y_range]
+            # k = [bev_size[0] / x_range, bev_size[1] / y_range]
             bev_coords[:, 0, :, :] *= k[0]
             bev_coords[:, 1, :, :] -= point_cloud_range[1]
             bev_coords[:, 1, :, :] *= k[1]
@@ -107,7 +109,8 @@ class FVNet(SingleStage3DDetector):
             fs = []
             for i in range(batch_size):
                 bev_coord = bev_coords[i].permute(1, 2, 0).reshape(-1, 2)
-                f = feats_bev[i][:, bev_coord[:, 0], bev_coord[:, 1]]
+                # f = feats_bev[i][:, bev_coord[:, 0], bev_coord[:, 1]]
+                f = feats_bev[i][:, bev_coord[:, 1], bev_coord[:, 0]]
                 f = f.reshape(-1, fv.shape[2], fv.shape[3])
                 fs.append(f)
             fs = torch.stack(fs, dim=0)
@@ -143,8 +146,8 @@ class FVNet(SingleStage3DDetector):
             return feats, None
 
         valid_coords = dict()
-        valid_coords_2d = torch.nonzero(fv[:, -1, :, :])
-        valid_coords_3d = fv[valid_coords_2d[:, 0],
+        valid_coords_2d = torch.nonzero(fv_src[:, -1, :, :])
+        valid_coords_3d = fv_src[valid_coords_2d[:, 0],
                              :3,
                              valid_coords_2d[:, 1],
                              valid_coords_2d[:, 2]]
@@ -157,7 +160,6 @@ class FVNet(SingleStage3DDetector):
         device = fv[0].device
         mlvl_valid_coords = []
         featmap_sizes = [featmap.size()[-2:] for featmap in feats]
-        fv_src = fv
 
         for i in range(len(feats)):
             featmap_size = featmap_sizes[i]
