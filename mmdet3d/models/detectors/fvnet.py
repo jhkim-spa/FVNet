@@ -36,6 +36,8 @@ class FVNet(SingleStage3DDetector):
                  middle_encoder=None,
                  backbone_bev=None,
                  neck_bev=None,
+                 bev_reduction=None,
+                 use_fv=True,
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None):
@@ -56,14 +58,19 @@ class FVNet(SingleStage3DDetector):
         self.conv_L = nn.Conv2d(bbox_head['feat_channels'], 1, 3, padding=1)
         self.conv_C = nn.Conv2d(bbox_head['feat_channels'], 1, 3, padding=1)
         # for bev feature
-        self.voxel_layer = Voxelization(**voxel_layer)
-        self.voxel_encoder = builder.build_voxel_encoder(voxel_encoder)
-        self.middle_encoder = builder.build_middle_encoder(middle_encoder)
+        if voxel_layer is not None:
+            self.voxel_layer = Voxelization(**voxel_layer)
+            self.voxel_encoder = builder.build_voxel_encoder(voxel_encoder)
+            self.middle_encoder = builder.build_middle_encoder(middle_encoder)
+        self.bev_reduction = bev_reduction
+        self.use_fv = use_fv
         if backbone_bev is not None:
             self.backbone_bev = build_backbone(backbone_bev)
         if neck_bev is not None:
             self.neck_bev = build_neck(neck_bev)
-            self.conv_bev = nn.Conv2d(512, 64, 1)
+            # self.conv_bev = nn.Conv2d(512, 64, 1)
+        if bev_reduction is not None:
+            self.conv_bev = nn.Conv2d(*bev_reduction, 1)
 
     def extract_feat(self, fv, img=None, points=None):
         if points is not None: # fv feature + bev feature
@@ -71,11 +78,18 @@ class FVNet(SingleStage3DDetector):
             voxel_features = self.voxel_encoder(voxels, num_points, coors)
             batch_size = coors[-1, 0].item() + 1
             x = self.middle_encoder(voxel_features, coors, batch_size)
-            x = self.backbone_bev(x)
+            if isinstance(x, dict):
+                x = self.backbone_bev(x['spatial_features'])
+            else:
+                x = self.backbone_bev(x)
             if self.neck_bev is not None:
                 x = self.neck_bev(x)
+            if self.bev_reduction is not None:
                 x = self.conv_bev(x[0])
-            feats_bev = x
+            if isinstance(x, list):
+                feats_bev = x[0]
+            else:
+                feats_bev = x
             feats_fv = self.backbone(fv)
 
             point_cloud_range = self.voxel_layer.point_cloud_range
@@ -99,6 +113,9 @@ class FVNet(SingleStage3DDetector):
             fs = torch.stack(fs, dim=0)
             feats_fv[0] = torch.cat((feats_fv[0], fs), dim=1)
             feats = feats_fv
+            if self.use_fv == False:
+                feats[0] = feats[0][:, -feats_bev.shape[1]:, :, :]
+                feats[0] = torch.cat((fv[:, :3, :, :], feats[0]), dim=1)
 
         elif self.fusion_mode is None:
             feats = self.backbone(fv)

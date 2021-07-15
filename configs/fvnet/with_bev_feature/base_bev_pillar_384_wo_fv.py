@@ -2,7 +2,8 @@
 dataset_type = 'KittiDataset'
 data_root = 'data/kitti/'
 class_names = ['Car']
-point_cloud_range = [0, -40, -3, 70.4, 40, 1]
+point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1]
+# point_cloud_range = [0, -40, -3, 70.4, 40, 1]
 input_modality = dict(use_lidar=True, use_camera=False)
 file_client_args = dict(backend='disk')
 
@@ -105,31 +106,35 @@ evaluation = dict(interval=1)
 
 
 # Model
+voxel_size = [0.16, 0.16, 4]
 model = dict(
     type='FVNet',
     voxel_layer=dict(
         max_num_points=5,
-        point_cloud_range=[0, -40, -3, 70.4, 40, 1],
-        voxel_size=[0.05, 0.05, 0.1],
+        point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1],
+        voxel_size=voxel_size,
         max_voxels=(16000, 40000)),
-    voxel_encoder=dict(type='HardSimpleVFE'),
-    middle_encoder=dict(
-        type='SparseEncoder',
+    voxel_encoder=dict(
+        type='PillarFeatureNet',
         in_channels=4,
-        sparse_shape=[41, 1600, 1408],
-        order=('conv', 'norm', 'act')),
+        feat_channels=[64],
+        with_distance=False,
+        voxel_size=voxel_size,
+        point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1]),
+    middle_encoder=dict(
+        type='PointPillarsScatter', in_channels=64, output_shape=[496, 432]),
     backbone_bev=dict(
         type='SECOND',
-        in_channels=256,
-        layer_nums=[5, 5],
-        layer_strides=[1, 2],
-        out_channels=[128, 256]),
+        in_channels=64,
+        layer_nums=[3, 5, 5],
+        layer_strides=[2, 2, 2],
+        out_channels=[64, 128, 256]),
     neck_bev=dict(
         type='SECONDFPN',
-        in_channels=[128, 256],
-        upsample_strides=[1, 2],
-        out_channels=[256, 256]),
-    depth_range=(0, 80),
+        in_channels=[64, 128, 256],
+        upsample_strides=[1, 2, 4],
+        out_channels=[128, 128, 128]),
+    use_fv=False,
     backbone=dict(
         type='UNet',
         num_outs=1,
@@ -141,8 +146,8 @@ model = dict(
         anchor_cfg =dict(size=[1.6, 3.9, 1.56],
                          rotation=[0, 1.57]),
         num_classes=1,
-        in_channels=131,
-        feat_channels=131,
+        in_channels=387,
+        feat_channels=387,
         use_direction_classifier=True,
         diff_rad_by_sin=True,
         bbox_coder=dict(type='DeltaXYZWLHRBBoxCoder', normalize=False),
@@ -189,7 +194,7 @@ find_unused_parameters = True
 # total_epochs = 80
 
 # Step
-lr = 0.001
+lr = 0.003
 optimizer = dict(type='AdamW', lr=lr, weight_decay=0.01)
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 lr_config = dict(
