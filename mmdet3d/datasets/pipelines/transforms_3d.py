@@ -887,27 +887,6 @@ class ProjectToImage(object):
         pc_projected[:, :, -1] = flag_channel
         return pc_projected
 
-    def get_objectness(self, points, width, height, lidar2img):
-        points = points[:, :3]
-        proj_velo2cam2 = lidar2img[:3]
-        pts_2d = self.project_to_image(points.transpose(1, 0),
-                                       proj_velo2cam2)
-
-        inds = np.where((pts_2d[0, :] < width) & (pts_2d[0, :] >= 0) &
-                        (pts_2d[1, :] < height) & (pts_2d[1, :] >= 0) &
-                        (points[:, 0] > 0)
-                        )[0]
-
-        imgfov_pc_pixel = pts_2d[:, inds]
-        imgfov_pc_velo = points[inds, :]
-
-        pc_projected = np.zeros((height, width, 1),
-            dtype=np.float32)
-        x_coords = np.trunc(imgfov_pc_pixel[0]).astype(np.int32)
-        y_coords = np.trunc(imgfov_pc_pixel[1]).astype(np.int32)
-        pc_projected[y_coords, x_coords, 0] = 1.
-        return pc_projected
-
     def __call__(self, input_dict):
         from mmdet3d.core.bbox.box_np_ops import points_in_rbbox
         width = input_dict['img_info']['width']
@@ -1123,3 +1102,32 @@ class RotPoints(object):
         self._rot_bbox_points(input_dict)
 
         return input_dict
+
+
+@PIPELINES.register_module()
+class RandomFlipFV(object):
+
+    def __init__(self,
+                 flip_ratio=0.5):
+        self.flip_ratio = flip_ratio
+
+    def random_flip_data_3d(self, input_dict, direction='horizontal'):
+        input_dict['fv'][:, :, 1] *= -1
+        input_dict['fv'] = np.flip(input_dict['fv'], 1)
+        input_dict['gt_bboxes_3d'].flip(direction)
+
+    def __call__(self, input_dict):
+
+        if 'pcd_horizontal_flip' not in input_dict:
+            flip_horizontal = True if np.random.rand(
+            ) < self.flip_ratio else False
+            input_dict['pcd_horizontal_flip'] = flip_horizontal
+
+        if input_dict['pcd_horizontal_flip']:
+            self.random_flip_data_3d(input_dict, 'horizontal')
+        return input_dict
+
+    def __repr__(self):
+        """str: Return a string that describes the module."""
+        repr_str = self.__class__.__name__
+        return repr_str

@@ -1,17 +1,17 @@
-_base_ = [
-    './model/fvnet_fv.py', './dataset/fv-kitti-3d-car_bg_filtered.py',
-    '../_base_/schedules/cyclic_40e.py',
-    '../_base_/default_runtime.py'
-]
-
 model = dict(
+    type='FVNet',
+    backbone=dict(
+        type='UNet',
+        num_outs=1,
+        n_channels=5,
+        concat=True),
     bbox_head=dict(
-        type='FVNetHeadTest',
+        type='FVNetHead',
         anchor_cfg =dict(size=[1.6, 3.9, 1.56],
                          rotation=[0, 1.57]),
         num_classes=1,
-        in_channels=64,
-        feat_channels=64,
+        in_channels=67,
+        feat_channels=67,
         use_direction_classifier=True,
         diff_rad_by_sin=True,
         bbox_coder=dict(type='DeltaXYZWLHRBBoxCoder'),
@@ -24,7 +24,6 @@ model = dict(
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
         loss_dir=dict(
             type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)))
-
 train_cfg = dict(
     assigner=dict(type='InBoxAssigner'),
     allowed_border=0,

@@ -1,13 +1,10 @@
-from matplotlib.pyplot import box
 import torch
 
 from mmdet.core.bbox.builder import BBOX_ASSIGNERS
 from mmdet.core.bbox.assigners.assign_result import AssignResult
 from mmdet.core.bbox.assigners.base_assigner import BaseAssigner
-from mmdet3d.core.bbox.box_np_ops import points_in_rbbox
 from mmdet3d.ops.roiaware_pool3d import points_in_boxes_gpu
 
-import time
 
 
 @BBOX_ASSIGNERS.register_module()

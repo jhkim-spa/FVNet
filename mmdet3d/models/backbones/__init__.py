@@ -5,6 +5,7 @@ from .pointnet2_sa_msg import PointNet2SAMSG
 from .pointnet2_sa_ssg import PointNet2SASSG
 from .second import SECOND
 from .unet import UNet
+# from .unet_mmdet import UNet
 from .dla import DLA
 
 __all__ = [

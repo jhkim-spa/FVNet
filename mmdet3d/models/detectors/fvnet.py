@@ -1,17 +1,13 @@
-import os
 import copy
 from os import path as osp
 
 import numpy as np
 import mmcv
-from mmdet3d.models.detectors.base import Base3DDetector
 from mmcv.parallel import DataContainer as DC
 from mmcv.runner import force_fp32
 import torch
 from torch import nn as nn
-from mmdet3d.ops import Voxelization
 from .. import builder
-from torch.nn import functional as F
 
 from mmdet3d.core import bbox3d2result, merge_aug_bboxes_3d
 from mmdet.models import DETECTORS, build_backbone, build_neck, build_head
@@ -23,21 +19,10 @@ from mmdet3d.core import Box3DMode, show_result
 class FVNet(SingleStage3DDetector):
 
     def __init__(self,
-                 use_anchor=False,
-                 fusion_mode=None,
-                 depth_wise=True,
-                 depth_range=(0, 20, 40, 60, 80),
                  backbone=None,
                  backbone_img=None,
                  neck=None,
                  bbox_head=None,
-                 voxel_layer=None,
-                 voxel_encoder=None,
-                 middle_encoder=None,
-                 backbone_bev=None,
-                 neck_bev=None,
-                 bev_reduction=None,
-                 use_fv=True,
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None):
@@ -49,105 +34,17 @@ class FVNet(SingleStage3DDetector):
             test_cfg=test_cfg,
             pretrained=pretrained,
         )
-        self.use_anchor = use_anchor
-        self.fusion_mode = fusion_mode
-        self.depth_wise = depth_wise
-        self.depth_range = depth_range
         if backbone_img is not None:
             self.backbone_img = build_backbone(backbone_img)
-        self.conv_L = nn.Conv2d(bbox_head['feat_channels'], 1, 3, padding=1)
-        self.conv_C = nn.Conv2d(bbox_head['feat_channels'], 1, 3, padding=1)
-        # for bev feature
-        if voxel_layer is not None:
-            self.voxel_layer = Voxelization(**voxel_layer)
-            self.voxel_encoder = builder.build_voxel_encoder(voxel_encoder)
-            self.middle_encoder = builder.build_middle_encoder(middle_encoder)
-        self.bev_reduction = bev_reduction
-        self.use_fv = use_fv
-        if backbone_bev is not None:
-            self.backbone_bev = build_backbone(backbone_bev)
-        if neck_bev is not None:
-            self.neck_bev = build_neck(neck_bev)
-            # self.conv_bev = nn.Conv2d(512, 64, 1)
-        if bev_reduction is not None:
-            self.conv_bev = nn.Conv2d(*bev_reduction, 1)
 
     def extract_feat(self, fv, img=None, points=None):
-        if points is not None: # fv feature + bev feature
-            fv_src = fv.clone()
-            voxels, num_points, coors = self.voxelize(points)
-            voxel_features = self.voxel_encoder(voxels, num_points, coors)
-            batch_size = coors[-1, 0].item() + 1
-            x = self.middle_encoder(voxel_features, coors, batch_size)
-            if isinstance(x, dict):
-                x = self.backbone_bev(x['spatial_features'])
-            else:
-                x = self.backbone_bev(x)
-            if self.neck_bev is not None:
-                x = self.neck_bev(x)
-            if self.bev_reduction is not None:
-                x = self.conv_bev(x[0])
-            if isinstance(x, list):
-                feats_bev = x[0]
-            else:
-                feats_bev = x
-            feats_fv = self.backbone(fv)
-
-            point_cloud_range = self.voxel_layer.point_cloud_range
-            x_range = point_cloud_range[3] - point_cloud_range[0]
-            y_range = point_cloud_range[4] - point_cloud_range[1]
-
-            bev_size = feats_bev.shape[2:]
-            bev_coords = fv_src[:, :2, :, :].clone()
-            k = [bev_size[1] / x_range, bev_size[0] / y_range]
-            # k = [bev_size[0] / x_range, bev_size[1] / y_range]
-            bev_coords[:, 0, :, :] *= k[0]
-            bev_coords[:, 1, :, :] -= point_cloud_range[1]
-            bev_coords[:, 1, :, :] *= k[1]
-            bev_coords = bev_coords.to(torch.long)
-
-            fs = []
-            for i in range(batch_size):
-                bev_coord = bev_coords[i].permute(1, 2, 0).reshape(-1, 2)
-                # f = feats_bev[i][:, bev_coord[:, 0], bev_coord[:, 1]]
-                f = feats_bev[i][:, bev_coord[:, 1], bev_coord[:, 0]]
-                f = f.reshape(-1, fv.shape[2], fv.shape[3])
-                fs.append(f)
-            fs = torch.stack(fs, dim=0)
-            feats_fv[0] = torch.cat((feats_fv[0], fs), dim=1)
-            feats = feats_fv
-            if self.use_fv == False:
-                feats[0] = feats[0][:, -feats_bev.shape[1]:, :, :]
-                feats[0] = torch.cat((fv[:, :3, :, :], feats[0]), dim=1)
-
-        elif self.fusion_mode is None:
-            feats = self.backbone(fv)
-        elif self.fusion_mode == 'concat_input':
-            inputs = torch.cat((fv, img), dim=1)
-            feats = self.backbone(inputs)
-        elif self.fusion_mode in ['concat_feat', 'gate']:
-            feats_L = self.backbone(fv)
-            feats_C = self.backbone_img(img)
-            if self.fusion_mode == 'concat_feat':
-                feats = [torch.cat((feat_L, feat_C), dim=1) for feat_L, feat_C\
-                    in zip(feats_L, feats_C)]
-            elif self.fusion_mode == 'gate':
-                feats = [torch.cat((feat_L, feat_C), dim=1) for feat_L, feat_C\
-                    in zip(feats_L, feats_C)]
-                feats_L = [feat_L * (self.conv_L(feat).sigmoid()) for feat, feat_L\
-                    in zip(feats, feats_L)]
-                feats_C = [feat_C * (self.conv_C(feat).sigmoid()) for feat, feat_C\
-                    in zip(feats, feats_C)]
-                feats = [torch.cat((feat_L, feat_C), dim=1) for feat_L, feat_C\
-                    in zip(feats_L, feats_C)]
+        feats = self.backbone(fv)
         if self.with_neck:
             feats = self.neck(feats)
-        if self.use_anchor:
-            return feats, None
 
         valid_coords = dict()
-        valid_coords_2d = torch.nonzero(fv_src[:, -1, :, :])
-        valid_coords_3d = fv_src[valid_coords_2d[:, 0],
+        valid_coords_2d = torch.nonzero(fv[:, -1, :, :])
+        valid_coords_3d = fv[valid_coords_2d[:, 0],
                              :3,
                              valid_coords_2d[:, 1],
                              valid_coords_2d[:, 2]]
@@ -168,22 +65,16 @@ class FVNet(SingleStage3DDetector):
             h_scale = h_des / fv.shape[2]
             w_scale = w_des / fv.shape[3]
 
-            fv_des = torch.zeros((batch_size, fv_src.shape[1],
+            fv_des = torch.zeros((batch_size, fv.shape[1],
                                     h_des, w_des)).to(device)
-            idx_src = torch.nonzero(fv_src[:, -1, :, :], as_tuple=True)
-            depth = fv_src[idx_src[0], 0, idx_src[1], idx_src[2]]
+            idx_src = torch.nonzero(fv[:, -1, :, :], as_tuple=True)
 
-            if self.depth_wise:
-                mask_sort = torch.argsort(depth, descending=True)
-                mask_range = torch.where((self.depth_range[i] < depth[mask_sort]) &\
-                                         (self.depth_range[i+1] > depth[mask_sort]))[0]
-                idx_src = [idx[mask_sort][mask_range] for idx in idx_src]
             idx_des = list()
             idx_des.append(idx_src[0])
             idx_des.append((h_scale * idx_src[1]).to(torch.long))
             idx_des.append((w_scale * idx_src[2]).to(torch.long))
             fv_des[idx_des[0], :, idx_des[1], idx_des[2]] = \
-                fv_src[idx_src[0], :, idx_src[1], idx_src[2]]
+                fv[idx_src[0], :, idx_src[1], idx_src[2]]
             
             res_valid_coords = dict()
             res_valid_coords_2d = torch.nonzero(fv_des[:, -1, :, :])
@@ -200,24 +91,6 @@ class FVNet(SingleStage3DDetector):
 
         return feats, mlvl_valid_coords
 
-    @torch.no_grad()
-    @force_fp32()
-    def voxelize(self, points):
-        """Apply hard voxelization to points."""
-        voxels, coors, num_points = [], [], []
-        for res in points:
-            res_voxels, res_coors, res_num_points = self.voxel_layer(res)
-            voxels.append(res_voxels)
-            coors.append(res_coors)
-            num_points.append(res_num_points)
-        voxels = torch.cat(voxels, dim=0)
-        num_points = torch.cat(num_points, dim=0)
-        coors_batch = []
-        for i, coor in enumerate(coors):
-            coor_pad = F.pad(coor, (1, 0), mode='constant', value=i)
-            coors_batch.append(coor_pad)
-        coors_batch = torch.cat(coors_batch, dim=0)
-        return voxels, num_points, coors_batch
 
     def forward_train(self,
                       fv,
@@ -275,7 +148,7 @@ class FVNet(SingleStage3DDetector):
 
         return [merged_bboxes]
     
-    def forward_test(self, fv, img_metas, points, img=None, **kwargs):
+    def forward_test(self, fv, img_metas, points=None, img=None, **kwargs):
 
         for var, name in [(fv, 'points'), (img_metas, 'img_metas')]:
             if not isinstance(var, list):
@@ -290,7 +163,7 @@ class FVNet(SingleStage3DDetector):
 
         if num_augs == 1:
             img = [img] if img is None else img
-            return self.simple_test(fv[0], img_metas[0], points[0], img[0], **kwargs)
+            return self.simple_test(fv[0], img_metas[0], img[0], **kwargs)
         else:
             return self.aug_test(fv, img_metas, img, **kwargs)
     
