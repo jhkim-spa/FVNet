@@ -1108,8 +1108,10 @@ class RotPoints(object):
 class RandomFlipFV(object):
 
     def __init__(self,
-                 flip_ratio=0.5):
+                 flip_ratio=0.5,
+                 sync_2d=False):
         self.flip_ratio = flip_ratio
+        self.sync_2d = sync_2d
 
     def random_flip_data_3d(self, input_dict, direction='horizontal'):
         input_dict['fv'][:, :, 1] *= -1
@@ -1123,8 +1125,12 @@ class RandomFlipFV(object):
             ) < self.flip_ratio else False
             input_dict['pcd_horizontal_flip'] = flip_horizontal
 
-        if input_dict['pcd_horizontal_flip']:
-            self.random_flip_data_3d(input_dict, 'horizontal')
+        if self.sync_2d:
+            if input_dict['flip']:
+                self.random_flip_data_3d(input_dict, 'horizontal')
+        else:
+            if input_dict['pcd_horizontal_flip']:
+                self.random_flip_data_3d(input_dict, 'horizontal')
         return input_dict
 
     def __repr__(self):

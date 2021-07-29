@@ -13,16 +13,26 @@ from mmdet3d.core import bbox3d2result, merge_aug_bboxes_3d
 from mmdet.models import DETECTORS, build_backbone, build_neck, build_head
 from .single_stage import SingleStage3DDetector
 from mmdet3d.core import Box3DMode, show_result
+from mmdet3d.ops import Voxelization
+from torch.nn import functional as F
 
 
 @DETECTORS.register_module()
 class FVNet(SingleStage3DDetector):
 
     def __init__(self,
+                 point_cloud_range=None,
+                 feats_to_use=None,
                  backbone=None,
                  backbone_img=None,
+                 backbone_bev=None,
                  neck=None,
+                 neck_img=None,
+                 neck_bev=None,
                  bbox_head=None,
+                 voxel_layer=None,
+                 voxel_encoder=None,
+                 middle_encoder=None,
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None):
@@ -34,62 +44,97 @@ class FVNet(SingleStage3DDetector):
             test_cfg=test_cfg,
             pretrained=pretrained,
         )
+        self.point_cloud_range = point_cloud_range
+        self.feats_to_use = feats_to_use
         if backbone_img is not None:
             self.backbone_img = build_backbone(backbone_img)
+        if voxel_layer is not None:
+            self.voxel_layer = Voxelization(**voxel_layer)
+            self.voxel_encoder = builder.build_voxel_encoder(voxel_encoder)
+            self.middle_encoder = builder.build_middle_encoder(middle_encoder)
 
-    def extract_feat(self, fv, img=None, points=None):
-        feats = self.backbone(fv)
-        if self.with_neck:
-            feats = self.neck(feats)
-
+    @torch.no_grad()
+    @force_fp32()
+    def voxelize(self, points):
+        """Apply hard voxelization to points."""
+        voxels, coors, num_points = [], [], []
+        for res in points:
+            res_voxels, res_coors, res_num_points = self.voxel_layer(res)
+            voxels.append(res_voxels)
+            coors.append(res_coors)
+            num_points.append(res_num_points)
+        voxels = torch.cat(voxels, dim=0)
+        num_points = torch.cat(num_points, dim=0)
+        coors_batch = []
+        for i, coor in enumerate(coors):
+            coor_pad = F.pad(coor, (1, 0), mode='constant', value=i)
+            coors_batch.append(coor_pad)
+        coors_batch = torch.cat(coors_batch, dim=0)
+        return voxels, num_points, coors_batch
+    
+    def get_valid_coords(self, fv):
         valid_coords = dict()
         valid_coords_2d = torch.nonzero(fv[:, -1, :, :])
         valid_coords_3d = fv[valid_coords_2d[:, 0],
-                             :3,
-                             valid_coords_2d[:, 1],
-                             valid_coords_2d[:, 2]]
+                            :3,
+                            valid_coords_2d[:, 1],
+                            valid_coords_2d[:, 2]]
+        valid_coords_reflectance = fv[valid_coords_2d[:, 0],
+                                      3,
+                                      valid_coords_2d[:, 1],
+                                      valid_coords_2d[:, 2]].reshape(-1, 1)
         batch_idx = valid_coords_2d[:, 0].reshape(-1, 1)
         valid_coords_3d = torch.cat((batch_idx, valid_coords_3d), dim=1)
+        valid_coords_reflectance = torch.cat((batch_idx, valid_coords_reflectance), dim=1)
         valid_coords['2d'] = valid_coords_2d
         valid_coords['3d'] = valid_coords_3d
+        valid_coords['reflectance'] = valid_coords_reflectance
+        return valid_coords
 
-        batch_size = len(fv)
-        device = fv[0].device
-        mlvl_valid_coords = []
-        featmap_sizes = [featmap.size()[-2:] for featmap in feats]
+    def fusion(self, feats_fv, feats_bev, feats_img, mode='concat'):
+        if mode == 'concat':
+            feats = [feats_fv, feats_bev, feats_img]
+            feats_fused = []
+            for feat in feats:
+                if feat is not None:
+                    feats_fused.append(feat[0])
+            feats_fused = torch.cat(feats_fused, dim=1)
+            return [feats_fused]
 
-        for i in range(len(feats)):
-            featmap_size = featmap_sizes[i]
-            h_des = featmap_size[0]
-            w_des = featmap_size[1]
-            h_scale = h_des / fv.shape[2]
-            w_scale = w_des / fv.shape[3]
 
-            fv_des = torch.zeros((batch_size, fv.shape[1],
-                                    h_des, w_des)).to(device)
-            idx_src = torch.nonzero(fv[:, -1, :, :], as_tuple=True)
+    def extract_feat(self, fv, img=None):
+        feats_fv = None
+        feats_bev = None
+        feats_img = None
 
-            idx_des = list()
-            idx_des.append(idx_src[0])
-            idx_des.append((h_scale * idx_src[1]).to(torch.long))
-            idx_des.append((w_scale * idx_src[2]).to(torch.long))
-            fv_des[idx_des[0], :, idx_des[1], idx_des[2]] = \
-                fv[idx_src[0], :, idx_src[1], idx_src[2]]
+        valid_coords = self.get_valid_coords(fv)
+        if 'fv' in self.feats_to_use:
+            feats_fv = self.backbone(fv)
+            if self.with_neck:
+                feats_fv = self.neck(feats_fv)
+
+        if 'bev' in self.feats_to_use:
+            batch_size = fv.shape[0]
+            points = []
+            for i in range(batch_size):
+                batch_idx = valid_coords['3d'][:, 0] == i
+                res_points = valid_coords['reflectance'][batch_idx][:, 1:].contiguous()
+                points.append(res_points)
+
+            voxels, num_points, coors = self.voxelize(points)
+            voxel_features = self.voxel_encoder(voxels, num_points, coors)
+            batch_size = coors[-1, 0].item() + 1
+            feats_bev = self.middle_encoder(voxel_features, coors, batch_size)
+            feats_bev = self.backbone_bev(feats_bev)
+            if self.with_neck:
+                feats_bev = self.neck_bev(feats_bev)
             
-            res_valid_coords = dict()
-            res_valid_coords_2d = torch.nonzero(fv_des[:, -1, :, :])
-            res_valid_coords_3d = fv_des[res_valid_coords_2d[:, 0],
-                                            :3,
-                                            res_valid_coords_2d[:, 1],
-                                            res_valid_coords_2d[:, 2]]
-            batch_idx = res_valid_coords_2d[:, 0].reshape(-1, 1)
-            res_valid_coords_3d = torch.cat((batch_idx, res_valid_coords_3d),
-                                                dim=1)
-            res_valid_coords['2d'] = res_valid_coords_2d
-            res_valid_coords['3d'] = res_valid_coords_3d
-            mlvl_valid_coords.append(res_valid_coords)
+        if 'img' in self.feats_to_use:
+            feats_img = self.backbone_img(img)
 
-        return feats, mlvl_valid_coords
+        feats = self.fusion(feats_fv, feats_bev, feats_img, mode='concat')
+
+        return feats, [valid_coords]
 
 
     def forward_train(self,
@@ -101,7 +146,7 @@ class FVNet(SingleStage3DDetector):
                       img=None,
                       gt_bboxes_ignore=None):
         fv = torch.stack(fv)
-        feats, valid_coords = self.extract_feat(fv, img, points)
+        feats, valid_coords = self.extract_feat(fv, img)
         outs = self.bbox_head(feats)
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
         if valid_coords is not None:
@@ -112,10 +157,10 @@ class FVNet(SingleStage3DDetector):
                 *loss_inputs, gt_bboxes_ignore=gt_bboxes_ignore)
         return losses
     
-    def simple_test(self, fv, img_metas, points= None, img=None, rescale=False):
+    def simple_test(self, fv, img_metas, img=None, points= None, rescale=False):
         """Test function without augmentaiton."""
         fv = torch.stack(fv)
-        feats, valid_coords = self.extract_feat(fv, img, points)
+        feats, valid_coords = self.extract_feat(fv, img)
         outs = self.bbox_head(feats)
         bbox_list = self.bbox_head.get_bboxes(
             *outs, img_metas, valid_coords, rescale=rescale)
@@ -163,7 +208,7 @@ class FVNet(SingleStage3DDetector):
 
         if num_augs == 1:
             img = [img] if img is None else img
-            return self.simple_test(fv[0], img_metas[0], img[0], **kwargs)
+            return self.simple_test(fv=fv[0], img_metas=img_metas[0], img=img[0], **kwargs)
         else:
             return self.aug_test(fv, img_metas, img, **kwargs)
     

@@ -1,7 +1,7 @@
 dataset_type = 'KittiDataset'
 data_root = 'data/kitti/'
 class_names = ['Car']
-point_cloud_range = [0, -40, -3, 80, 40, 1]
+point_cloud_range = [0, -39.68, -3, 69.12, 39.68, 1]
 input_modality = dict(use_lidar=True, use_camera=False)
 file_client_args = dict(backend='disk')
 
@@ -24,7 +24,7 @@ train_pipeline = [
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ProjectToImage'),
-    dict(type='RandomFlipFV', flip_ratio=0.5),
+    # dict(type='RandomFlipFV', flip_ratio=0.5),
     dict(type='ResizeFV', size=fv_size),
     dict(type='PadFV', size_divisor=32),
     dict(type='DefaultFormatBundleFV', class_names=class_names),
@@ -64,12 +64,12 @@ data = dict(
     workers_per_gpu=4,
     train=dict(
         type='RepeatDataset',
-        times=2,
+        times=100,
         dataset=dict(
             type=dataset_type,
             data_root=data_root,
-            ann_file=data_root + 'kitti_infos_train.pkl',
-            # ann_file=data_root + 'kitti_infos_debug.pkl',
+            # ann_file=data_root + 'kitti_infos_train.pkl',
+            ann_file=data_root + 'kitti_infos_debug.pkl',
             split='training',
             pts_prefix='velodyne_reduced',
             pipeline=train_pipeline,
@@ -82,8 +82,8 @@ data = dict(
     val=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file=data_root + 'kitti_infos_val.pkl',
-        # ann_file=data_root + 'kitti_infos_debug.pkl',
+        # ann_file=data_root + 'kitti_infos_val.pkl',
+        ann_file=data_root + 'kitti_infos_debug.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
@@ -94,8 +94,8 @@ data = dict(
     test=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file=data_root + 'kitti_infos_val.pkl',
-        # ann_file=data_root + 'kitti_infos_debug.pkl',
+        # ann_file=data_root + 'kitti_infos_val.pkl',
+        ann_file=data_root + 'kitti_infos_debug.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
