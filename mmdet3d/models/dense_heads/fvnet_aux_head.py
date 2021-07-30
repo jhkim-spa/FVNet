@@ -3,6 +3,7 @@ import torch
 from mmcv.cnn import bias_init_with_prob, normal_init
 from mmcv.runner import force_fp32
 from torch import nn as nn
+import torch.nn.functional as F
 
 from mmdet3d.core import (PseudoSampler, anchor, box3d_multiclass_nms, limit_period,
                           xywhr2xyxyr)
@@ -56,8 +57,14 @@ class FVNetAuxHead(nn.Module):
         self.cls_out_channels = self.num_classes
         self.conv_shared = nn.Sequential(
             nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(self.in_channels),
             nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
-            nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1)
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(self.in_channels),
+            nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(self.in_channels),
         )
         self.conv_cls = nn.Conv2d(self.in_channels, self.cls_out_channels, 1)
         self.conv_reg = nn.Conv2d(self.in_channels, self.box_code_size, 1)
@@ -146,14 +153,14 @@ class FVNetAuxHead(nn.Module):
         loss_cls = self.loss_cls(
             cls_score, labels, avg_factor=cls_score.shape[0])
 
-        # regression loss
-        bbox_pred = bbox_pred.permute(0, 2, 3, 1).reshape(-1, self.box_code_size).contiguous()
-        bbox_targets = bbox_targets.permute(0, 2, 3, 1).reshape(-1, self.box_code_size).contiguous()
-
         bg_class_ind = self.num_classes
         pos_inds = ((labels >= 0)
                     & (labels < bg_class_ind)).nonzero().reshape(-1)
         num_pos = len(pos_inds)
+        # regression loss
+        bbox_pred = bbox_pred.permute(0, 2, 3, 1).reshape(-1, self.box_code_size).contiguous()
+        bbox_targets = bbox_targets.permute(0, 2, 3, 1).reshape(-1, self.box_code_size).contiguous()
+
         pos_bbox_pred = bbox_pred[pos_inds]
         pos_bbox_targets = bbox_targets[pos_inds]
 
@@ -161,6 +168,6 @@ class FVNetAuxHead(nn.Module):
             loss_bbox = self.loss_bbox(
                 pos_bbox_pred,
                 pos_bbox_targets,
-                avg_factor=pos_bbox_pred.shape[0])
+                avg_factor=pos_inds.shape[0])
 
         return loss_cls, loss_bbox

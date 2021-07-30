@@ -3,6 +3,7 @@ import torch
 from mmcv.cnn import bias_init_with_prob, normal_init
 from mmcv.runner import force_fp32
 from torch import nn as nn
+import torch.nn.functional as F
 
 from mmdet3d.core import (PseudoSampler, anchor, box3d_multiclass_nms, limit_period,
                           xywhr2xyxyr)
@@ -93,25 +94,22 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
     def _init_layers(self):
         """Initialize neural network layers of the head."""
         self.cls_out_channels = self.num_classes * self.num_anchors
-        if self.shared_conv:
-            self.conv_shared = nn.Sequential(
-                nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
-                nn.Conv2d(self.feat_channels, int(self.feat_channels / 2), 3, padding=1))
-            self.feat_channels = int(self.feat_channels / 2)
-            self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
-            self.conv_reg = nn.Conv2d(self.feat_channels,
-                                    self.num_anchors * self.box_code_size, 1)
-            if self.use_direction_classifier:
-                self.conv_dir_cls = nn.Conv2d(self.feat_channels,
-                                            self.num_anchors * 2, 1)
-        else:
-            self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
-            self.conv_reg = nn.Conv2d(self.feat_channels,
-                                    self.num_anchors * self.box_code_size, 1)
-            if self.use_direction_classifier:
-                self.conv_dir_cls = nn.Conv2d(self.feat_channels,
-                                            self.num_anchors * 2, 1)
-
+        self.conv_shared = nn.Sequential(
+            nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(self.feat_channels),
+            nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(self.feat_channels),
+            nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm2d(self.feat_channels))
+        self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
+        self.conv_reg = nn.Conv2d(self.feat_channels,
+                                self.num_anchors * self.box_code_size, 1)
+        if self.use_direction_classifier:
+            self.conv_dir_cls = nn.Conv2d(self.feat_channels,
+                                        self.num_anchors * 2, 1)
     def init_weights(self):
         """Initialize the weights of head."""
         bias_cls = bias_init_with_prob(0.01)
@@ -128,9 +126,7 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             tuple[torch.Tensor]: Contain score of each class, bbox \
                 regression and direction classification predictions.
         """
-        # valid_coords
-        if self.shared_conv:
-            x = self.conv_shared(x)
+        x = self.conv_shared(x)
         cls_score = self.conv_cls(x)
         bbox_pred = self.conv_reg(x)
         dir_cls_preds = None
