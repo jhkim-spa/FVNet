@@ -32,6 +32,7 @@ train_cfg = dict(
     pos_weight=-1,
     debug=False)
 test_cfg = dict(
+    use_group_voting=False,
     use_rotate_nms=True,
     nms_across_levels=False,
     nms_thr=0.01,

@@ -148,3 +148,4 @@ class UnetResNet(nn.Module):
     def init_weights(self, pretrained):
         if self.pretrained_seg is not None:
             self.load_state_dict(torch.load(self.pretrained_seg), strict=False)
+            self.pretrained_seg = None

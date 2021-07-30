@@ -390,11 +390,80 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             mlvl_scores = torch.cat([mlvl_scores, padding], dim=1)
 
         score_thr = cfg.get('score_thr', 0)
+
+
+
+        def get_cluster(key_point, points, radius):
+            distance = torch.sqrt(((key_point - points) ** 2).reshape(-1, 3).sum(dim=1))
+            inds = torch.where(distance <= radius)[0]
+            return inds
+
+        use_group_voting = cfg.get('use_group_voting', False)
+        if use_group_voting:
+            # TODO: check angle mean
+            from mmdet3d.ops import furthest_point_sample
+            fg_inds = torch.where(mlvl_scores[:, 0] > score_thr)[0]
+            device = mlvl_bboxes.device
+            if fg_inds.shape[0] == 0:
+                bboxes = torch.tensor([],device=device).reshape(0, 7)
+                scores = torch.tensor([], device=device)
+                labels = torch.tensor([], device=device)
+                bboxes = input_meta['box_type_3d'](bboxes, box_dim=self.box_code_size)
+                return bboxes, scores, labels
+
+            mlvl_bboxes = mlvl_bboxes[fg_inds]
+            mlvl_scores = mlvl_scores[fg_inds]
+            mlvl_dir_scores = mlvl_dir_scores[fg_inds]
+
+            points = mlvl_bboxes[:, :3].unsqueeze(dim=0).contiguous()
+            key_indices = furthest_point_sample(points, 64).squeeze().to(torch.long)
+            points = points.squeeze()
+            key_points = points[key_indices]
+            radius = 0.1
+            mlvl_bboxes_list = []
+            mlvl_scores_list = []
+            mlvl_dir_scores_list = []
+            for key_point in key_points:
+                inds = get_cluster(key_point, points, radius)
+                bboxes = mlvl_bboxes[inds]
+
+
+                dir_rot = limit_period(bboxes[..., 6] - self.dir_offset,
+                                    self.dir_limit_offset, np.pi)
+                bboxes[..., 6] = (
+                    dir_rot + self.dir_offset +
+                    np.pi * mlvl_dir_scores[inds].to(bboxes.dtype))
+
+
+                bboxes = torch.cat([bboxes[:, :6],
+                                    torch.sin(bboxes[:, -1]).reshape(-1, 1),
+                                    torch.cos(bboxes[:, -1]).reshape(-1, 1)], dim=1)
+                bboxes = bboxes.mean(dim=0).reshape(1, -1)
+                bboxes = torch.cat([bboxes[:, :6],
+                                    torch.atan2(bboxes[:, -2], bboxes[:, -1]).reshape(-1, 1)], dim=1)
+                scores = mlvl_scores[inds]
+                scores = scores.mean(dim=0).reshape(1, -1)
+                dir_scores = mlvl_dir_scores[inds]
+                dir_scores = torch.round(dir_scores.to(torch.float).mean()).to(torch.long).reshape(1, -1)
+
+                mlvl_bboxes_list.append(bboxes)
+                mlvl_scores_list.append(scores)
+                mlvl_dir_scores_list.append(dir_scores)
+
+            mlvl_bboxes = torch.cat(mlvl_bboxes_list, dim=0)
+            mlvl_scores = torch.cat(mlvl_scores_list, dim=0)
+            mlvl_dir_scores = torch.cat(mlvl_dir_scores_list).reshape(-1)
+
+            mlvl_bboxes_for_nms = xywhr2xyxyr(input_meta['box_type_3d'](
+                mlvl_bboxes, box_dim=self.box_code_size).bev)
+
+
         results = box3d_multiclass_nms(mlvl_bboxes, mlvl_bboxes_for_nms,
                                        mlvl_scores, score_thr, cfg.max_num,
                                        cfg, mlvl_dir_scores)
         bboxes, scores, labels, dir_scores = results
-        if bboxes.shape[0] > 0:
+        if False:
+        # if bboxes.shape[0] > 0:
             dir_rot = limit_period(bboxes[..., 6] - self.dir_offset,
                                    self.dir_limit_offset, np.pi)
             bboxes[..., 6] = (
