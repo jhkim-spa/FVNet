@@ -81,13 +81,14 @@ class OutConv(nn.Module):
 @BACKBONES.register_module()
 class UNet(nn.Module):
     def __init__(self, n_channels, num_outs,
-                 n_classes=1, bilinear=True, concat=False, half_channel=False):
+                 n_classes=1, bilinear=True, concat=False, pretrained=None, half_channel=False):
         super(UNet, self).__init__()
         self.n_channels = n_channels
         self.num_outs = num_outs
         self.n_classes = n_classes
         self.bilinear = bilinear
         self.concat = concat
+        self.pretrained = pretrained
         if half_channel:
             self.inc = DoubleConv(n_channels, 32)
             self.down1 = Down(32, 64)
@@ -116,6 +117,7 @@ class UNet(nn.Module):
                 self.up4 = Up(128+3, 64, bilinear)
             else:
                 self.up4 = Up(128, 64, bilinear)
+        self.init_weights(None)
 
     def forward(self, x):
         x1 = self.inc(x)
@@ -137,5 +139,6 @@ class UNet(nn.Module):
         outs = [x11, x22, x33, x44]
         return outs[-self.num_outs:]
 
-    def init_weights(self, pretrained=None):
-        pass
+    def init_weights(self, pretrained):
+        if self.pretrained is not None:
+            self.load_state_dict(torch.load(self.pretrained), strict=False)

@@ -7,11 +7,15 @@ _base_ = [
 
 model = dict(
     backbone_img=dict(
-        type='UNet',
-        num_outs=1,
-        n_channels=3,
-        concat=False,
-        pretrained='pretrained/unet_carvana_scale1_epoch5.pth'),
+        type='UnetResNet',
+        input_channels=3,
+        num_classes=1,
+        pretrained_seg='pretrained/best_model.pth',
+    ),
+    bbox_head=dict(
+        in_channels=99,
+        feat_channels=99
+    )
 )
 
 evaluation = dict(interval=2)

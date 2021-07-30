@@ -7,9 +7,10 @@ from .second import SECOND
 from .unet import UNet
 # from .unet_mmdet import UNet
 from .dla import DLA
+from .unetresnet import UnetResNet
 
 __all__ = [
     'ResNet', 'ResNetV1d', 'ResNeXt', 'SSDVGG', 'HRNet', 'NoStemRegNet',
     'SECOND', 'PointNet2SASSG', 'PointNet2SAMSG', 'MultiBackbone',
-    'UNet', 'Res2Net', 'DLA'
+    'UNet', 'Res2Net', 'DLA', 'UnetResNet'
 ]
