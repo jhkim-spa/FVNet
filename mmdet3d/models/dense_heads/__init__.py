@@ -8,9 +8,10 @@ from .ssd_3d_head import SSD3DHead
 from .vote_head import VoteHead
 from .fvnet_head import FVNetHead
 from .fvnet_anchor_head import FVNetAnchorHead
+from .fvnet_aux_head import FVNetAuxHead
 
 __all__ = [
     'Anchor3DHead', 'FreeAnchor3DHead', 'PartA2RPNHead', 'VoteHead',
     'SSD3DHead', 'BaseConvBboxHead', 'CenterHead', 'ShapeAwareHead',
-    'FVNetHead', 'FVNetAnchorHead'
+    'FVNetHead', 'FVNetAnchorHead', 'FVNetAuxHead'
 ]

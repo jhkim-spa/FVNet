@@ -36,7 +36,8 @@ train_pipeline = [
     dict(type='ResizeFV', size=fv_size),
     dict(type='PadFV', size_divisor=32),
     dict(type='DefaultFormatBundleFV', class_names=class_names),
-    dict(type='Collect3D', keys=['fv', 'img', 'gt_bboxes_3d', 'gt_labels_3d'])
+    dict(type='Collect3D', keys=['fv', 'img', 'gt_bboxes_3d', 'gt_labels_3d',
+                                 'gt_bboxes', 'gt_labels'])
 ]
 test_pipeline = [
     dict(type='LoadImageFromFile'),

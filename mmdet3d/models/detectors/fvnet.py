@@ -30,6 +30,7 @@ class FVNet(SingleStage3DDetector):
                  neck_img=None,
                  neck_bev=None,
                  bbox_head=None,
+                 aux_head=None,
                  voxel_layer=None,
                  voxel_encoder=None,
                  middle_encoder=None,
@@ -52,6 +53,9 @@ class FVNet(SingleStage3DDetector):
             self.voxel_layer = Voxelization(**voxel_layer)
             self.voxel_encoder = builder.build_voxel_encoder(voxel_encoder)
             self.middle_encoder = builder.build_middle_encoder(middle_encoder)
+        self.aux_head = aux_head
+        if self.aux_head is not None:
+            self.aux_head = build_head(aux_head)
 
     @torch.no_grad()
     @force_fp32()
@@ -134,7 +138,7 @@ class FVNet(SingleStage3DDetector):
 
         feats = self.fusion(feats_fv, feats_bev, feats_img, mode='concat')
 
-        return feats, [valid_coords]
+        return feats, feats_img, [valid_coords]
 
 
     def forward_train(self,
@@ -142,25 +146,29 @@ class FVNet(SingleStage3DDetector):
                       img_metas,
                       gt_bboxes_3d,
                       gt_labels_3d,
+                      gt_bboxes=None,
+                      gt_labels=None,
                       points=None,
                       img=None,
                       gt_bboxes_ignore=None):
         fv = torch.stack(fv)
-        feats, valid_coords = self.extract_feat(fv, img)
+        feats, feats_img, valid_coords = self.extract_feat(fv, img)
         outs = self.bbox_head(feats)
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
-        if valid_coords is not None:
-            losses = self.bbox_head.loss(
-                *loss_inputs, valid_coords, gt_bboxes_ignore=gt_bboxes_ignore)
-        else:
-            losses = self.bbox_head.loss(
-                *loss_inputs, gt_bboxes_ignore=gt_bboxes_ignore)
+        losses = self.bbox_head.loss(
+            *loss_inputs, valid_coords, gt_bboxes_ignore=gt_bboxes_ignore)
+        if self.aux_head is not None:
+            outs_aux = self.aux_head(feats_img)
+            loss_inputs = outs_aux + (gt_bboxes, gt_labels, img_metas)
+            losses_aux = self.aux_head.loss(*loss_inputs)
+            losses.update(loss_2d_center=losses_aux['loss_2d_center'],
+                          loss_2d_bbox=losses_aux['loss_2d_bbox'])
         return losses
     
     def simple_test(self, fv, img_metas, img=None, points= None, rescale=False):
         """Test function without augmentaiton."""
         fv = torch.stack(fv)
-        feats, valid_coords = self.extract_feat(fv, img)
+        feats, feats_img, valid_coords = self.extract_feat(fv, img)
         outs = self.bbox_head(feats)
         bbox_list = self.bbox_head.get_bboxes(
             *outs, img_metas, valid_coords, rescale=rescale)
