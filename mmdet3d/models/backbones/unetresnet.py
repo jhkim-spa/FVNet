@@ -88,7 +88,7 @@ class UnetResNet(nn.Module):
         self.input_channels = input_channels
         
         self.pool = nn.MaxPool2d(2, 2)
-        self.relu = nn.ReLU(inplace=True)
+        # self.relu = nn.ReLU(inplace=True)
         if self.input_channels != 3:
             self.channel_tuner = nn.Conv2d(input_channels, 3, kernel_size=1)
         
@@ -115,7 +115,7 @@ class UnetResNet(nn.Module):
         self.dec1 = DecoderBlockResNet(num_filters * 2 * 2, num_filters * 2 * 2, num_filters, res_blocks_dec=False)
         self.dec0 = ConvRelu(num_filters, num_filters)
         
-        self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
+        # self.final = nn.Conv2d(num_filters, num_classes, kernel_size=1)
         self.dropout_2d = nn.Dropout2d(p=self.Dropout)
 
     def forward(self, x, z=None):

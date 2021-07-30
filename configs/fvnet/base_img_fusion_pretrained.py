@@ -20,3 +20,5 @@ model = dict(
 
 evaluation = dict(interval=2)
 checkpoint_config = dict(interval=2)
+
+find_unused_parameters = True
