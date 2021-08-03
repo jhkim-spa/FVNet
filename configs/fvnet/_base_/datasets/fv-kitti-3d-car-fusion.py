@@ -81,7 +81,7 @@ test_pipeline = [
     )
 ]
 data = dict(
-    samples_per_gpu=8,
+    samples_per_gpu=4,
     workers_per_gpu=4,
     train=dict(
         type='RepeatDataset',
@@ -116,6 +116,7 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'kitti_infos_val.pkl',
+        # ann_file=data_root + 'kitti_infos_train.pkl',
         # ann_file=data_root + 'kitti_infos_debug.pkl',
         split='training',
         pts_prefix='velodyne_reduced',

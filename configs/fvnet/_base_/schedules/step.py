@@ -1,4 +1,4 @@
-lr = 0.01
+lr = 0.003
 optimizer = dict(type='AdamW', lr=lr, weight_decay=0.01)
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
 lr_config = dict(

@@ -54,18 +54,27 @@ class FVNetAuxHead(nn.Module):
 
     def _init_layers(self):
         """Initialize neural network layers of the head."""
-        self.cls_out_channels = self.num_classes
-        self.conv_shared = nn.Sequential(
-            nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(self.in_channels),
-            nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(self.in_channels),
-            nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(self.in_channels),
-        )
+        self.conv_sahred = None
+        # self.cls_out_channels = self.num_classes
+        # self.conv_shared = nn.Sequential(
+        #     nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(self.in_channels),
+        #     nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(self.in_channels),
+        #     nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(self.in_channels)
+        # )
+        # self.conv_shared = nn.Sequential(
+        #     nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+        #     nn.BatchNorm2d(self.in_channels),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+        #     nn.BatchNorm2d(self.in_channels),
+        #     nn.ReLU(inplace=True),
+        # )
         self.conv_cls = nn.Conv2d(self.in_channels, self.cls_out_channels, 1)
         self.conv_reg = nn.Conv2d(self.in_channels, self.box_code_size, 1)
 
@@ -76,8 +85,8 @@ class FVNetAuxHead(nn.Module):
         normal_init(self.conv_reg, std=0.01)
 
     def forward_single(self, x):
-
-        x = self.conv_shared(x)
+        if self.conv_shared is not None:
+            x = self.conv_shared(x)
         cls_score = self.conv_cls(x)
         bbox_pred = self.conv_reg(x)
         return cls_score, bbox_pred

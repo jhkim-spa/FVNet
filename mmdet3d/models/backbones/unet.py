@@ -140,5 +140,4 @@ class UNet(nn.Module):
         return outs[-self.num_outs:]
 
     def init_weights(self, pretrained):
-        if self.pretrained is not None:
-            self.load_state_dict(torch.load(self.pretrained), strict=False)
+        pass

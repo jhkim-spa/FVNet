@@ -10,9 +10,10 @@ from .votenet import VoteNet
 from .voxelnet import VoxelNet
 from .fvnet import FVNet
 from .fvnet_fusion import FVNetFusion
+from .pvgnet import PVGNet
 
 __all__ = [
     'Base3DDetector', 'VoxelNet', 'DynamicVoxelNet', 'MVXTwoStageDetector',
     'DynamicMVXFasterRCNN', 'MVXFasterRCNN', 'PartA2', 'VoteNet', 'H3DNet',
-    'CenterPoint', 'SSD3DNet', 'FVNet', 'FVNetFusion'
+    'CenterPoint', 'SSD3DNet', 'FVNet', 'FVNetFusion', 'PVGNet'
 ]

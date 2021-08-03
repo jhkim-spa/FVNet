@@ -1,13 +1,11 @@
 dataset_type = 'KittiDataset'
 data_root = 'data/kitti/'
 class_names = ['Car']
-point_cloud_range = [0, -39.68, -3, 69.12, 39.68, 1]
+point_cloud_range = [0, -40, -3, 70.4, 40, 1]
 input_modality = dict(use_lidar=True, use_camera=False)
 file_client_args = dict(backend='disk')
 
-
 fv_size = (620, 190)
-img_size = (1242, 375)
 train_pipeline = [
     dict(
         type='LoadPointsFromFile',
@@ -20,7 +18,7 @@ train_pipeline = [
         with_bbox_3d=True,
         with_label_3d=True,
         file_client_args=file_client_args),
-    # dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
+    dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ProjectToImage'),
@@ -39,7 +37,7 @@ test_pipeline = [
         file_client_args=file_client_args),
     dict(
         type='MultiScaleFlipAug3D',
-        img_scale=(1242, 375),
+        img_scale=fv_size,
         pts_scale_ratio=1,
         flip=False,
         transforms=[
@@ -60,30 +58,26 @@ test_pipeline = [
     )
 ]
 data = dict(
-    samples_per_gpu=8,
+    samples_per_gpu=4,
     workers_per_gpu=4,
     train=dict(
         type='RepeatDataset',
-        times=100,
+        times=2,
         dataset=dict(
             type=dataset_type,
             data_root=data_root,
-            # ann_file=data_root + 'kitti_infos_train.pkl',
-            ann_file=data_root + 'kitti_infos_debug.pkl',
+            ann_file=data_root + 'kitti_infos_train.pkl',
             split='training',
             pts_prefix='velodyne_reduced',
             pipeline=train_pipeline,
             modality=input_modality,
             classes=class_names,
             test_mode=False,
-            # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
-            # and box_type_3d='Depth' in sunrgbd and scannet dataset.
             box_type_3d='LiDAR')),
     val=dict(
         type=dataset_type,
         data_root=data_root,
-        # ann_file=data_root + 'kitti_infos_val.pkl',
-        ann_file=data_root + 'kitti_infos_debug.pkl',
+        ann_file=data_root + 'kitti_infos_val.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
@@ -94,8 +88,7 @@ data = dict(
     test=dict(
         type=dataset_type,
         data_root=data_root,
-        # ann_file=data_root + 'kitti_infos_val.pkl',
-        ann_file=data_root + 'kitti_infos_debug.pkl',
+        ann_file=data_root + 'kitti_infos_val.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,

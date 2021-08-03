@@ -93,17 +93,26 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
 
     def _init_layers(self):
         """Initialize neural network layers of the head."""
+        self.conv_shared = None
         self.cls_out_channels = self.num_classes * self.num_anchors
-        self.conv_shared = nn.Sequential(
-            nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(self.feat_channels),
-            nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(self.feat_channels),
-            nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.BatchNorm2d(self.feat_channels))
+        # self.conv_shared = nn.Sequential(
+        #     nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(self.feat_channels),
+        #     nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(self.feat_channels),
+        #     nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(self.feat_channels)
+        # )
+        # self.conv_shared = nn.Sequential(
+        #     nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
+        #     nn.BatchNorm2d(self.feat_channels),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(self.feat_channels, self.feat_channels, 3, padding=1),
+        #     nn.BatchNorm2d(self.feat_channels),
+        #     nn.ReLU(inplace=True))
         self.conv_cls = nn.Conv2d(self.feat_channels, self.cls_out_channels, 1)
         self.conv_reg = nn.Conv2d(self.feat_channels,
                                 self.num_anchors * self.box_code_size, 1)
@@ -126,7 +135,8 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             tuple[torch.Tensor]: Contain score of each class, bbox \
                 regression and direction classification predictions.
         """
-        x = self.conv_shared(x)
+        if self.conv_shared is not None:
+            x = self.conv_shared(x)
         cls_score = self.conv_cls(x)
         bbox_pred = self.conv_reg(x)
         dir_cls_preds = None
@@ -539,9 +549,6 @@ class FVNetHead(nn.Module, AnchorTrainMixin):
             cls_score_list.append(cls_score[i, valid_coords['2d'][batch_idx][:, 1],
                 valid_coords['2d'][batch_idx][:, 2], :].reshape(-1, self.num_classes))
         cls_score = torch.cat(cls_score_list).contiguous()
-        # cls_score = cls_score.reshape(-1, self.num_classes)
-        # assert labels.max().item() <= self.num_classes
-
         loss_cls = self.loss_cls(
             cls_score, labels, label_weights, avg_factor=num_total_samples)
 

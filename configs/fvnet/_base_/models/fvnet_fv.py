@@ -1,7 +1,7 @@
 model = dict(
     type='FVNet',
     point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1],
-    feats_to_use=['fv', 'img'],
+    feats_to_use=['fv'],
     backbone=dict(
         type='UNet',
         num_outs=1,
@@ -12,8 +12,8 @@ model = dict(
         anchor_cfg =dict(size=[1.6, 3.9, 1.56],
                          rotation=[0, 1.57]),
         num_classes=1,
-        in_channels=67+64,
-        feat_channels=67+64,
+        in_channels=67,
+        feat_channels=67,
         use_direction_classifier=True,
         diff_rad_by_sin=True,
         bbox_coder=dict(type='DeltaXYZWLHRBBoxCoder'),

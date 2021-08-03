@@ -6,6 +6,7 @@ _base_ = [
 ]
 
 model = dict(
+    feats_to_use=['fv', 'img'],
     backbone_img=dict(
         type='UnetResNet',
         input_channels=3,
