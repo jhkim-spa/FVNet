@@ -123,18 +123,45 @@ class PVGNet(SingleStage3DDetector):
         points = torch.cat(points, dim=0)[:, :3]
 
         pts_feats = []
+
+
+        interpolation=True
         for i in range(num_levels):
-            bev_feat = bev_feats[i]
-            bev_shape = bev_feat.shape[2:]
-            
-            x = torch.trunc(points[:, 0] * bev_shape[1] / x_range)
-            y = torch.trunc((points[:, 1] - point_cloud_range[1]) * bev_shape[0] / y_range)
-            x = x.to(torch.long)
-            y = y.to(torch.long)
-            pts_feat = torch.cat([points,
-                                  bev_feat[batch_idx.to(torch.long), :, y, x]],
-                                 dim=1)
-            pts_feats.append(pts_feat)
+            if interpolation:
+                bev_feat = bev_feats[i]
+                bev_shape = bev_feat.shape[2:]
+                x = points[:, 0] * bev_shape[1] / x_range
+                y = (points[:, 1] - point_cloud_range[1]) * bev_shape[0] / y_range
+                x_ = torch.trunc(x).to(torch.long)
+                y_ = torch.trunc(y).to(torch.long)
+
+                pts_feat_list = []
+                # zero padding
+                bev_feat_padded = torch.zeros(bev_feat.shape[0], bev_feat.shape[1], bev_feat.shape[2]+2, bev_feat.shape[3]+2,
+                                              dtype=bev_feat.dtype, device = bev_feat.device)
+                bev_feat_padded[:, :, 1:-1, 1:-1] = bev_feat
+                for i in [-1, 0, 1]:
+                    for j in [-1, 0, 1]:
+                        distance = torch.sqrt((x - torch.trunc(x+j))**2 + (y - torch.trunc(y+i))**2)
+
+                        feat = bev_feat_padded[batch_idx.to(torch.long), :, y_ + i, x_ + j]
+                        feat = (1 / (distance + 1)).unsqueeze(-1) * feat
+                        pts_feat_list.append(feat)
+                pts_feat = sum(pts_feat_list)
+                pts_feat = torch.cat([points, pts_feat], dim=1)
+                pts_feats.append(pts_feat)
+
+            else:
+                bev_feat = bev_feats[i]
+                bev_shape = bev_feat.shape[2:]
+                x = torch.trunc(points[:, 0] * bev_shape[1] / x_range)
+                y = torch.trunc((points[:, 1] - point_cloud_range[1]) * bev_shape[0] / y_range)
+                x = x.to(torch.long)
+                y = y.to(torch.long)
+                pts_feat = torch.cat([points,
+                                    bev_feat[batch_idx.to(torch.long), :, y, x]],
+                                    dim=1)
+                pts_feats.append(pts_feat)
         
         return pts_feats
 
