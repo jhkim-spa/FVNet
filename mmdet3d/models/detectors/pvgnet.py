@@ -14,6 +14,7 @@ class PVGNet(SingleStage3DDetector):
     r"""`VoxelNet <https://arxiv.org/abs/1711.06396>`_ for 3D detection."""
 
     def __init__(self,
+                 interpolation,
                  voxel_layer,
                  voxel_encoder,
                  middle_encoder,
@@ -31,6 +32,7 @@ class PVGNet(SingleStage3DDetector):
             test_cfg=test_cfg,
             pretrained=pretrained,
         )
+        self.interpolation = interpolation
         self.voxel_layer = Voxelization(**voxel_layer)
         self.voxel_encoder = builder.build_voxel_encoder(voxel_encoder)
         self.middle_encoder = builder.build_middle_encoder(middle_encoder)
@@ -87,7 +89,7 @@ class PVGNet(SingleStage3DDetector):
             dict: Losses of each branch.
         """
         x = self.extract_feat(points, img_metas)
-        x = self.bev2pts(points, x, interpolation=False) # (B, C, H, W) -> (B, N, C)
+        x = self.bev2pts(points, x, interpolation=self.interpolation) # (B, C, H, W) -> (B, N, C)
         outs = self.bbox_head(x)
         loss_inputs = outs + (points, gt_bboxes_3d, gt_labels_3d, img_metas)
         losses = self.bbox_head.loss(
@@ -108,7 +110,6 @@ class PVGNet(SingleStage3DDetector):
             pts_feats (list[torch.Tensor]): Point-wise features of each sample
                 with shape (S, N, C) (S: number of scales)
         """
-        # TODO: interpolation 구현
         point_cloud_range = self.voxel_layer.point_cloud_range
         x_range = point_cloud_range[3] - point_cloud_range[0]
         y_range = point_cloud_range[4] - point_cloud_range[1]
@@ -119,59 +120,60 @@ class PVGNet(SingleStage3DDetector):
         batch_idx = []
         for i in range(batch_size):
             batch_idx.append(torch.ones(num_pts[i]) * i)
-        batch_idx = torch.cat(batch_idx, dim=0).T
+        batch_idx = torch.cat(batch_idx, dim=0).T.to(torch.long)
         points = torch.cat(points, dim=0)[:, :3]
 
         pts_feats = []
 
-
-        interpolation=True
         for i in range(num_levels):
             if interpolation:
                 bev_feat = bev_feats[i]
                 bev_shape = bev_feat.shape[2:]
                 x = points[:, 0] * bev_shape[1] / x_range
                 y = (points[:, 1] - point_cloud_range[1]) * bev_shape[0] / y_range
-                x_ = torch.trunc(x).to(torch.long)
-                y_ = torch.trunc(y).to(torch.long)
+                x_ = torch.ceil(x).to(torch.long) - 1 # diffrent from trunc
+                y_ = torch.ceil(y).to(torch.long) - 1
 
-                pts_feat_list = []
+                pts_feat = None
                 # zero padding
-                bev_feat_padded = torch.zeros(bev_feat.shape[0], bev_feat.shape[1], bev_feat.shape[2]+2, bev_feat.shape[3]+2,
-                                              dtype=bev_feat.dtype, device = bev_feat.device)
-                bev_feat_padded[:, :, 1:-1, 1:-1] = bev_feat
+                import torch.nn.functional as F
+                bev_feat = F.pad(input=bev_feat, pad=(1, 1, 1, 1), mode='constant', value=0)
                 for i in [-1, 0, 1]:
                     for j in [-1, 0, 1]:
-                        distance = torch.sqrt((x - torch.trunc(x+j))**2 + (y - torch.trunc(y+i))**2)
-
-                        feat = bev_feat_padded[batch_idx.to(torch.long), :, y_ + i, x_ + j]
-                        feat = (1 / (distance + 1)).unsqueeze(-1) * feat
-                        pts_feat_list.append(feat)
-                pts_feat = sum(pts_feat_list)
+                        # distance = torch.sqrt((x - torch.trunc(x+j))**2 + (y - torch.trunc(y+i))**2)
+                        distance = torch.sqrt((x - (x_ + j))**2 + (y - (y_ + i))**2)
+                        feat = bev_feat[batch_idx, :, y_ + i + 1, x_ + j + 1]
+                        feat = (1 / (2*distance + 1)).unsqueeze(-1) * feat
+                        if pts_feat is None:
+                            pts_feat = feat
+                        else:
+                            pts_feat += feat
                 pts_feat = torch.cat([points, pts_feat], dim=1)
                 pts_feats.append(pts_feat)
-
             else:
                 bev_feat = bev_feats[i]
                 bev_shape = bev_feat.shape[2:]
-                x = torch.trunc(points[:, 0] * bev_shape[1] / x_range)
-                y = torch.trunc((points[:, 1] - point_cloud_range[1]) * bev_shape[0] / y_range)
+                x = torch.ceil(points[:, 0] * bev_shape[1] / x_range) - 1
+                y = torch.ceil((points[:, 1] - point_cloud_range[1]) * bev_shape[0] / y_range) - 1
                 x = x.to(torch.long)
                 y = y.to(torch.long)
+                pts_feat = bev_feat[batch_idx, :, y, x]
                 pts_feat = torch.cat([points,
-                                    bev_feat[batch_idx.to(torch.long), :, y, x]],
-                                    dim=1)
+                                      bev_feat[batch_idx, :, y, x]],
+                                      dim=1)
                 pts_feats.append(pts_feat)
         
         return pts_feats
 
-    def simple_test(self, points, img_metas, imgs=None, rescale=False):
+    def simple_test(self, points, img_metas, imgs=None, rescale=False,
+        gt_bboxes_3d=None, gt_labels_3d=None):
         """Test function without augmentaiton."""
         x = self.extract_feat(points, img_metas)
-        x = self.bev2pts(points, x, interpolation=False)
+        x = self.bev2pts(points, x, interpolation=self.interpolation)
         outs = self.bbox_head(x)
         bbox_list = self.bbox_head.get_bboxes(
-            points, *outs, img_metas, rescale=rescale)
+            points, *outs, img_metas, rescale=rescale,
+            gt_bboxes_3d=gt_bboxes_3d, gt_labels_3d=gt_labels_3d)
         bbox_results = [
             bbox3d2result(bboxes, scores, labels)
             for bboxes, scores, labels in bbox_list

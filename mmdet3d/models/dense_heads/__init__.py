@@ -10,9 +10,12 @@ from .fvnet_head import FVNetHead
 from .fvnet_anchor_head import FVNetAnchorHead
 from .fvnet_aux_head import FVNetAuxHead
 from .pvgnet_head import PVGNetHead
+from .pvgnet_head_anchor import PVGAnchorHead
+from .pvgnet_head_pcdet import PVGNetHeadPCDET
 
 __all__ = [
     'Anchor3DHead', 'FreeAnchor3DHead', 'PartA2RPNHead', 'VoteHead',
     'SSD3DHead', 'BaseConvBboxHead', 'CenterHead', 'ShapeAwareHead',
-    'FVNetHead', 'FVNetAnchorHead', 'FVNetAuxHead', 'PVGNetHead'
+    'FVNetHead', 'FVNetAnchorHead', 'FVNetAuxHead', 'PVGNetHead',
+    'PVGAnchorHead', 'PVGNetHeadPCDET'
 ]

@@ -1,5 +1,4 @@
 import torch
-import numpy as np
 
 from mmdet.core.bbox import BaseBBoxCoder
 from mmdet.core.bbox.builder import BBOX_CODERS
@@ -8,71 +7,95 @@ from mmdet.core.bbox.builder import BBOX_CODERS
 @BBOX_CODERS.register_module()
 class PVGNetBBoxCoder(BaseBBoxCoder):
     """Bbox Coder for 3D boxes.
+
     Args:
         code_size (int): The dimension of boxes to be encoded.
     """
-    # TODO: sine difference
 
-    def __init__(self,
-                 prior_size=[1.6, 3.9, 1.56],
-                 encode_size=8,
-                 decode_size=7):
+    def __init__(self, code_size=7, normalize=False):
         super(PVGNetBBoxCoder, self).__init__()
-        self.prior_size = prior_size
-        self.encode_size = encode_size
-        self.decode_size = decode_size
+        self.code_size = code_size
+        self.normalize = normalize
 
     @staticmethod
-    def encode(points, boxes, prior_size):
-        # normalize
-        size = torch.tensor(prior_size)
-        wa, la, ha = size
-        diagonal = torch.sqrt(wa**2 + la**2)
-        xt = (boxes[:, 0] - points[:, 0]) / diagonal
-        yt = (boxes[:, 1] - points[:, 1]) / diagonal
-        zt = (boxes[:, 2] + boxes[:, 5]/2 - points[:, 2]) / ha
-        wt = torch.log(boxes[:, 3] / prior_size[0])
-        lt = torch.log(boxes[:, 4] / prior_size[1])
-        ht = torch.log(boxes[:, 5] / prior_size[2])
-        rt_cos = torch.cos(boxes[:, 6])
-        rt_sin = torch.sin(boxes[:, 6])
+    def encode(src_boxes, dst_boxes, normalize):
+        """Get box regression transformation deltas (dx, dy, dz, dw, dh, dl,
+        dr, dv*) that can be used to transform the `src_boxes` into the
+        `target_boxes`.
 
-        # not normalize
-        # xt = boxes[:, 0] - points[:, 0]
-        # yt = boxes[:, 1] - points[:, 1]
-        # zt = boxes[:, 2] + boxes[:, 5]/2 - points[:, 2]
-        # wt = torch.log(boxes[:, 3])
-        # lt = torch.log(boxes[:, 4])
-        # ht = torch.log(boxes[:, 5])
-        # rt_cos = torch.cos(boxes[:, 6])
-        # rt_sin = torch.sin(boxes[:, 6])
+        Args:
+            src_boxes (torch.Tensor): source boxes, e.g., object proposals.
+            dst_boxes (torch.Tensor): target of the transformation, e.g.,
+                ground-truth boxes.
 
-        return torch.stack([xt, yt, zt, wt, lt, ht, rt_cos, rt_sin]).T
+        Returns:
+            torch.Tensor: Box transformation deltas.
+        """
+        box_ndim = src_boxes.shape[-1]
+        cas, cgs, cts = [], [], []
+        if box_ndim > 7:
+            xa, ya, za, wa, la, ha, ra, *cas = torch.split(
+                src_boxes, 1, dim=-1)
+            xg, yg, zg, wg, lg, hg, rg, *cgs = torch.split(
+                dst_boxes, 1, dim=-1)
+            cts = [g - a for g, a in zip(cgs, cas)]
+        else:
+            xa, ya, za, wa, la, ha, ra = torch.split(src_boxes, 1, dim=-1)
+            xg, yg, zg, wg, lg, hg, rg = torch.split(dst_boxes, 1, dim=-1)
+        za = za + ha / 2
+        zg = zg + hg / 2
+        diagonal = torch.sqrt(la**2 + wa**2)
+        if normalize:
+            xt = (xg - xa) / diagonal
+            yt = (yg - ya) / diagonal
+            zt = (zg - za) / ha
+        else:
+            xt = xg - xa
+            yt = yg - ya
+            zt = zg - za
+        lt = torch.log(lg / la)
+        wt = torch.log(wg / wa)
+        ht = torch.log(hg / ha)
+        rt = rg - ra
+        return torch.cat([xt, yt, zt, wt, lt, ht, rt, *cts], dim=-1)
 
     @staticmethod
-    def decode(points, deltas, prior_size):
-        # normalize
-        size = torch.tensor(prior_size)
-        wa, la, ha = size
-        diagonal = torch.sqrt(wa**2 + la**2)
-        xg = points[:, 0] + deltas[:, 0] * diagonal
-        yg = points[:, 1] + deltas[:, 1] * diagonal
-        zg = points[:, 2] + deltas[:, 2] * ha
+    def decode(anchors, deltas, normalize):
+        """Apply transformation `deltas` (dx, dy, dz, dw, dh, dl, dr, dv*) to
+        `boxes`.
 
-        wg = torch.exp(deltas[:, 3]) * prior_size[0]
-        lg = torch.exp(deltas[:, 4]) * prior_size[1]
-        hg = torch.exp(deltas[:, 5]) * prior_size[2]
+        Args:
+            anchors (torch.Tensor): Parameters of anchors with shape (N, 7).
+            deltas (torch.Tensor): Encoded boxes with shape
+                (N, 7+n) [x, y, z, w, l, h, r, velo*].
+
+        Returns:
+            torch.Tensor: Decoded boxes.
+        """
+        cas, cts = [], []
+        box_ndim = anchors.shape[-1]
+        if box_ndim > 7:
+            xa, ya, za, wa, la, ha, ra, *cas = torch.split(anchors, 1, dim=-1)
+            xt, yt, zt, wt, lt, ht, rt, *cts = torch.split(deltas, 1, dim=-1)
+        else:
+            xa, ya, za, wa, la, ha, ra = torch.split(anchors, 1, dim=-1)
+            xt, yt, zt, wt, lt, ht, rt = torch.split(deltas, 1, dim=-1)
+
+        za = za + ha / 2
+        diagonal = torch.sqrt(la**2 + wa**2)
+        if normalize:
+            xg = xt * diagonal + xa
+            yg = yt * diagonal + ya
+            zg = zt * ha + za
+        else:
+            xg = xt + xa
+            yg = yt + ya
+            zg = zt + za
+
+        lg = torch.exp(lt) * la
+        wg = torch.exp(wt) * wa
+        hg = torch.exp(ht) * ha
+        rg = rt + ra
         zg = zg - hg / 2
-        rg = torch.atan2(deltas[:, 7], deltas[:, 6])
-
-        # not normalize
-        # xg = points[:, 0] + deltas[:, 0]
-        # yg = points[:, 1] + deltas[:, 1]
-        # zg = points[:, 2] + deltas[:, 2]
-
-        # wg = torch.exp(deltas[:, 3])
-        # lg = torch.exp(deltas[:, 4])
-        # hg = torch.exp(deltas[:, 5])
-        # zg = zg - hg / 2
-        # rg = torch.atan2(deltas[:, 7], deltas[:, 6])
-        return torch.stack([xg, yg, zg, wg, lg, hg, rg]).T
+        cgs = [t + a for t, a in zip(cts, cas)]
+        return torch.cat([xg, yg, zg, wg, lg, hg, rg, *cgs], dim=-1)

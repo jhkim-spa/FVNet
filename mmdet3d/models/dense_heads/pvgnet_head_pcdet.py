@@ -13,7 +13,7 @@ from .anchor3d_head import Anchor3DHead
 
 
 @HEADS.register_module()
-class PVGNetHead(nn.Module):
+class PVGNetHeadPCDET(nn.Module):
 
     def __init__(self,
                  num_classes=1,

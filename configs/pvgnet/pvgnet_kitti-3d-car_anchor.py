@@ -7,6 +7,7 @@ _base_ = [
 voxel_size = [0.16, 0.16, 4]
 model = dict(
     type='PVGNet',
+    interpolation=True,
     voxel_layer=dict(
         max_num_points=32,
         point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1],
@@ -33,21 +34,25 @@ model = dict(
         upsample_strides=[1, 2, 4],
         out_channels=[128, 128, 128]),
     bbox_head=dict(
-        type='PVGNetHead',
+        type='PVGAnchorHead',
+        anchor_cfg =dict(size=[1.6, 3.9, 1.56],
+                         rotation=[1.57]),
         num_classes=1,
+        in_channels=387,
         feat_channels=387,
+        use_direction_classifier=True,
+        diff_rad_by_sin=True,
+        bbox_coder=dict(type='PVGNetBBoxCoder', normalize=False),
         fg_weight=15,
-		bbox_coder=dict(
-            type='PVGNetBBoxCoder',
-            encode_size=8,
-            decode_size=7),
         loss_cls=dict(
             type='FocalLoss',
             use_sigmoid=True,
             gamma=2.0,
             alpha=0.25,
             loss_weight=1.0),
-        loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0)))
+        loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
+        loss_dir=dict(
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)))
 # model training and testing settings
 train_cfg = dict(
     assigner=dict(type='InBoxAssigner'),
@@ -101,6 +106,7 @@ train_pipeline = [
 ]
 test_pipeline = [
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
+    # dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
     dict(
         type='MultiScaleFlipAug3D',
         img_scale=(1333, 800),
@@ -120,6 +126,7 @@ test_pipeline = [
                 class_names=class_names,
                 with_label=False),
             dict(type='Collect3D', keys=['points'])
+            # dict(type='Collect3D', keys=['points', 'gt_bboxes_3d', 'gt_labels_3d'])
         ])
 ]
 
@@ -157,6 +164,7 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'kitti_infos_val.pkl',
+        # ann_file=data_root + 'kitti_infos_train.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
@@ -169,5 +177,6 @@ data = dict(
 lr = 0.0005
 optimizer = dict(lr=lr)
 optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
-evaluation = dict(interval=1)
 total_epochs = 80
+evaluation = dict(interval=2)
+checkpoint_config = dict(interval=2)

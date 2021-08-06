@@ -12,13 +12,12 @@ class DeltaXYZWLHRBBoxCoder(BaseBBoxCoder):
         code_size (int): The dimension of boxes to be encoded.
     """
 
-    def __init__(self, code_size=7, normalize=True):
+    def __init__(self, code_size=7):
         super(DeltaXYZWLHRBBoxCoder, self).__init__()
         self.code_size = code_size
-        self.normalize = normalize
 
     @staticmethod
-    def encode(src_boxes, dst_boxes, normalize=True):
+    def encode(src_boxes, dst_boxes):
         """Get box regression transformation deltas (dx, dy, dz, dw, dh, dl,
         dr, dv*) that can be used to transform the `src_boxes` into the
         `target_boxes`.
@@ -45,14 +44,9 @@ class DeltaXYZWLHRBBoxCoder(BaseBBoxCoder):
         za = za + ha / 2
         zg = zg + hg / 2
         diagonal = torch.sqrt(la**2 + wa**2)
-        if normalize:
-            xt = (xg - xa) / diagonal
-            yt = (yg - ya) / diagonal
-            zt = (zg - za) / ha
-        else:
-            xt = xg - xa
-            yt = yg - ya
-            zt = zg - za
+        xt = (xg - xa) / diagonal
+        yt = (yg - ya) / diagonal
+        zt = (zg - za) / ha
         lt = torch.log(lg / la)
         wt = torch.log(wg / wa)
         ht = torch.log(hg / ha)
@@ -60,7 +54,7 @@ class DeltaXYZWLHRBBoxCoder(BaseBBoxCoder):
         return torch.cat([xt, yt, zt, wt, lt, ht, rt, *cts], dim=-1)
 
     @staticmethod
-    def decode(anchors, deltas, normalize=True):
+    def decode(anchors, deltas):
         """Apply transformation `deltas` (dx, dy, dz, dw, dh, dl, dr, dv*) to
         `boxes`.
 
@@ -83,15 +77,9 @@ class DeltaXYZWLHRBBoxCoder(BaseBBoxCoder):
 
         za = za + ha / 2
         diagonal = torch.sqrt(la**2 + wa**2)
-        if normalize:
-            xg = xt * diagonal + xa
-            yg = yt * diagonal + ya
-            zg = zt * ha + za
-        else:
-            xg = xt + xa
-            yg = yt + ya
-            zg = zt + za
-
+        xg = xt * diagonal + xa
+        yg = yt * diagonal + ya
+        zg = zt * ha + za
         lg = torch.exp(lt) * la
         wg = torch.exp(wt) * wa
         hg = torch.exp(ht) * ha
