@@ -1,14 +1,12 @@
 import numpy as np
 import torch
-from mmcv.cnn import bias_init_with_prob, normal_init
 from mmcv.runner import force_fp32
 from torch import nn as nn
-import torch.nn.functional as F
 
-from mmdet3d.core import (PseudoSampler, anchor, box3d_multiclass_nms, limit_period,
+from mmdet3d.core import (PseudoSampler, box3d_multiclass_nms, limit_period,
                           xywhr2xyxyr)
-from mmdet.core import (build_anchor_generator, build_assigner,
-                        build_bbox_coder, build_sampler, multi_apply)
+from mmdet.core import (build_assigner, build_bbox_coder, build_sampler,
+                        multi_apply)
 from mmdet.models import HEADS
 from ..builder import build_loss
 from .train_mixins import AnchorTrainMixin
@@ -53,9 +51,6 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
         self.assign_per_class = assign_per_class
         self.dir_offset = dir_offset
         self.dir_limit_offset = dir_limit_offset
-        self.fp16_enabled = False
-        self.num_anchors = 2
-        self.num_levels = 1
 
         # build box coder
         self.bbox_coder = build_bbox_coder(bbox_coder)
@@ -95,7 +90,7 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
 
     def _init_layers(self):
         """Initialize neural network layers of the head."""
-        self.shared_fc = nn.Sequential(
+        self.shared_layer = nn.Sequential(
             nn.Linear(self.feat_channels, 128),
             nn.BatchNorm1d(128),
             nn.ReLU(inplace=True),
@@ -107,12 +102,12 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
             nn.ReLU(inplace=True)
         )
         # Classification layer
-        self.cls_fc = nn.Linear(64, self.num_classes)
+        self.cls_layer = nn.Linear(64, self.num_classes)
         # Regression layer
-        self.reg_fc = nn.Linear(64, self.box_code_size)
+        self.reg_layer = nn.Linear(64, self.box_code_size)
 
         if self.use_direction_classifier:
-            self.dir_cls_fc = nn.Linear(64, self.num_classes * 2, 1)
+            self.dir_cls_layer = nn.Linear(64, self.num_classes * 2, 1)
 
     def init_weights(self):
         """Initialize the weights of head."""
@@ -126,12 +121,13 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
             tuple[torch.Tensor]: Contain score of each class, bbox \
                 regression and direction classification predictions.
         """
-        x = self.shared_fc(x)
-        cls_score = self.cls_fc(x)
-        bbox_pred = self.reg_fc(x)
+        if self.shared_layer is not None:
+            x = self.shared_layer(x)
+        cls_score = self.cls_layer(x)
+        bbox_pred = self.reg_layer(x)
         dir_cls_preds = None
         if self.use_direction_classifier:
-            dir_cls_preds = self.dir_cls_fc(x)
+            dir_cls_preds = self.dir_cls_layer(x)
         return cls_score, bbox_pred, dir_cls_preds
 
     def forward(self, feats):
@@ -172,10 +168,10 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
              cls_scores,
              bbox_preds,
              dir_cls_preds,
-             points,
              gt_bboxes,
              gt_labels,
              input_metas,
+             points,
              gt_bboxes_ignore=None):
         """Calculate losses.
         Args:
@@ -200,7 +196,7 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
         device = cls_scores[0].device
         anchor_list = self.get_anchors(points, self.anchor_cfg, device=device)
         label_channels = self.num_classes if self.use_sigmoid_cls else 1
-        cls_reg_targets = self.anchor_target_3d(
+        cls_reg_targets = self.get_targets(
             anchor_list,
             gt_bboxes,
             input_metas,
@@ -218,19 +214,6 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
         num_total_samples = (
             num_total_pos + num_total_neg if self.sampling else num_total_pos)
 
-
-        # check forground points
-        # import matplotlib.pyplot as plt
-        # pts = points[0].cpu()
-        # pts_pos = pts[labels_list[0][0] == 0]
-        # plt.scatter(pts[:, 1], pts[:, 2], s=0.01)
-        # plt.gca().set_aspect('equal', adjustable='box')
-        # plt.savefig('points.png', dpi=300)
-        # plt.scatter(pts_pos[:, 1], pts_pos[:, 2], s=0.02)
-        # plt.savefig('points_with_gt.png', dpi=300)
-        # plt.cla()
-
-        # num_total_samples = None
         losses_cls, losses_bbox, losses_dir = multi_apply(
             self.loss_single,
             cls_scores,
@@ -270,8 +253,8 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
         """
         device = cls_scores[0].device
 
+        # 배치사이즈 1, single scale만 구현함
         mlvl_anchors = self.get_anchors(points, self.anchor_cfg, device=device)[0]
-
         proposals = self.get_bboxes_single(cls_scores, bbox_preds,
                                            dir_cls_preds, mlvl_anchors,
                                            input_metas, cfg, rescale,
@@ -363,7 +346,6 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
         return bboxes, scores, labels
 
     def get_anchors(self, points, anchor_cfg, device):
-        # TODO: multi scale 구현하기
         batch_size = len(points)
         anchors_batch = []
         for i in range(batch_size):
@@ -461,15 +443,15 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
 
         return loss_cls, loss_bbox, loss_dir
 
-    def anchor_target_3d(self,
-                         anchor_list,
-                         gt_bboxes_list,
-                         input_metas,
-                         gt_bboxes_ignore_list=None,
-                         gt_labels_list=None,
-                         label_channels=1,
-                         num_classes=1,
-                         sampling=True):
+    def get_targets(self,
+                    anchor_list,
+                    gt_bboxes_list,
+                    input_metas,
+                    gt_bboxes_ignore_list=None,
+                    gt_labels_list=None,
+                    label_channels=1,
+                    num_classes=1,
+                    sampling=True):
 
         num_imgs = len(input_metas)
         assert len(anchor_list) == num_imgs

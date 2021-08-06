@@ -1,13 +1,10 @@
-_base_ = [
-	'../_base_/schedules/cyclic_40e.py',
-	'../_base_/default_runtime.py'
-]
-
-# Model
+##############################################################################################
+########################################## Model #############################################
+##############################################################################################
 voxel_size = [0.16, 0.16, 4]
 model = dict(
     type='PVGNet',
-    interpolation=True,
+    bev_interp=True,
     voxel_layer=dict(
         max_num_points=32,
         point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1],
@@ -67,7 +64,8 @@ test_cfg = dict(
     min_bbox_size=0,
     max_num=50)
 ##############################################################################################
-# Dataset
+######################################## Dataset #############################################
+##############################################################################################
 dataset_type = 'KittiDataset'
 data_root = 'data/kitti/'
 class_names = ['Car']
@@ -140,7 +138,6 @@ data = dict(
             type=dataset_type,
             data_root=data_root,
             ann_file=data_root + 'kitti_infos_train.pkl',
-            # ann_file=data_root + 'kitti_infos_debug.pkl',
             split='training',
             pts_prefix='velodyne_reduced',
             pipeline=train_pipeline,
@@ -152,7 +149,6 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'kitti_infos_val.pkl',
-        # ann_file=data_root + 'kitti_infos_debug.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
@@ -164,7 +160,6 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'kitti_infos_val.pkl',
-        # ann_file=data_root + 'kitti_infos_train.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
@@ -172,11 +167,42 @@ data = dict(
         classes=class_names,
         test_mode=True,
         box_type_3d='LiDAR'))
-##############################################################################################
-# Schedule
-lr = 0.0005
-optimizer = dict(lr=lr)
-optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
-total_epochs = 80
 evaluation = dict(interval=2)
+##############################################################################################
+######################################## Schedule ############################################
+##############################################################################################
+lr = 0.0005
+optimizer = dict(type='AdamW', lr=lr, betas=(0.95, 0.99), weight_decay=0.01)
+optimizer_config = dict(grad_clip=dict(max_norm=35, norm_type=2))
+lr_config = dict(
+    policy='cyclic',
+    target_ratio=(10, 1e-4),
+    cyclic_times=1,
+    step_ratio_up=0.4,
+)
+momentum_config = dict(
+    policy='cyclic',
+    target_ratio=(0.85 / 0.95, 1),
+    cyclic_times=1,
+    step_ratio_up=0.4,
+)
+total_epochs = 80
+##############################################################################################
+######################################## Runtime #############################################
+##############################################################################################
 checkpoint_config = dict(interval=2)
+log_config = dict(
+    interval=50,
+    hooks=[
+        dict(type='TextLoggerHook'),
+        dict(type='TensorboardLoggerHook')
+    ])
+# yapf:enable
+dist_params = dict(backend='nccl')
+log_level = 'INFO'
+work_dir = None
+load_from = None
+resume_from = None
+workflow = [('train', 1)]
+
+

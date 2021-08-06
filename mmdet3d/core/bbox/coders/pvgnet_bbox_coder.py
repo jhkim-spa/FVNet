@@ -6,10 +6,8 @@ from mmdet.core.bbox.builder import BBOX_CODERS
 
 @BBOX_CODERS.register_module()
 class PVGNetBBoxCoder(BaseBBoxCoder):
-    """Bbox Coder for 3D boxes.
-
-    Args:
-        code_size (int): The dimension of boxes to be encoded.
+    """
+    DeltaXYZWLHRBBoxCoder에서 xyz normalize 할지 여부만 추가 
     """
 
     def __init__(self, code_size=7, normalize=False):
@@ -19,18 +17,6 @@ class PVGNetBBoxCoder(BaseBBoxCoder):
 
     @staticmethod
     def encode(src_boxes, dst_boxes, normalize):
-        """Get box regression transformation deltas (dx, dy, dz, dw, dh, dl,
-        dr, dv*) that can be used to transform the `src_boxes` into the
-        `target_boxes`.
-
-        Args:
-            src_boxes (torch.Tensor): source boxes, e.g., object proposals.
-            dst_boxes (torch.Tensor): target of the transformation, e.g.,
-                ground-truth boxes.
-
-        Returns:
-            torch.Tensor: Box transformation deltas.
-        """
         box_ndim = src_boxes.shape[-1]
         cas, cgs, cts = [], [], []
         if box_ndim > 7:
@@ -61,17 +47,6 @@ class PVGNetBBoxCoder(BaseBBoxCoder):
 
     @staticmethod
     def decode(anchors, deltas, normalize):
-        """Apply transformation `deltas` (dx, dy, dz, dw, dh, dl, dr, dv*) to
-        `boxes`.
-
-        Args:
-            anchors (torch.Tensor): Parameters of anchors with shape (N, 7).
-            deltas (torch.Tensor): Encoded boxes with shape
-                (N, 7+n) [x, y, z, w, l, h, r, velo*].
-
-        Returns:
-            torch.Tensor: Decoded boxes.
-        """
         cas, cts = [], []
         box_ndim = anchors.shape[-1]
         if box_ndim > 7:
