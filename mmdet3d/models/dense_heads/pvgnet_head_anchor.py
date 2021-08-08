@@ -301,6 +301,14 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
                 scores = cls_score.sigmoid()
             else:
                 scores = cls_score.softmax(-1)
+            # give ground truth positive points in box
+
+
+
+
+
+
+
 
             nms_pre = cfg.get('nms_pre', -1)
             if nms_pre > 0 and scores.shape[0] > nms_pre:
