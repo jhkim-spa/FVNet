@@ -187,7 +187,7 @@ class DataBaseSampler(object):
                 db_infos[name] = filtered_infos
         return db_infos
 
-    def sample_all(self, gt_bboxes, gt_labels, img=None):
+    def sample_all(self, gt_bboxes, gt_labels, gt_bboxes_2d=None, img=None):
         """Sampling all categories of bboxes.
 
         Args:
@@ -262,6 +262,16 @@ class DataBaseSampler(object):
 
             gt_labels = np.array([self.cat2label[s['name']] for s in sampled],
                                  dtype=np.long)
+
+            # Image patch paste implemnetation
+            # if img is not None:
+
+
+
+
+
+
+
             ret = {
                 'gt_labels_3d':
                 gt_labels,
