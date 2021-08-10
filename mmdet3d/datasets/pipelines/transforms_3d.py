@@ -441,7 +441,10 @@ class PointShuffle(object):
             dict: Results after filtering, 'points' keys are updated \
                 in the result dict.
         """
-        input_dict['points'].shuffle()
+        # input_dict['points'].shuffle()
+        shuffle_idx = torch.randperm(input_dict['points'].__len__())
+        input_dict['points'] = input_dict['points'][shuffle_idx]
+        input_dict['shuffle_inds'] = shuffle_idx
         return input_dict
 
     def __repr__(self):
@@ -519,6 +522,7 @@ class PointsRangeFilter(object):
         points_mask = points.in_range_3d(self.pcd_range)
         clean_points = points[points_mask]
         input_dict['points'] = clean_points
+        input_dict['points_range_mask'] = points_mask
         return input_dict
 
     def __repr__(self):
@@ -1137,3 +1141,64 @@ class RandomFlipFV(object):
         """str: Return a string that describes the module."""
         repr_str = self.__class__.__name__
         return repr_str
+    
+
+    @PIPELINES.register_module()
+    class ImagePointsMatching(object):
+
+        def __init__(self, phase):
+            self.phase = phase
+        
+        def project_to_image(self, points, proj_mat):
+            num_pts = points.shape[1]
+
+            points = torch.cat((points, torch.ones((1, num_pts))))
+            points = proj_mat @ points
+            points[:2, :] /= points[2, :]
+            return points[:2, :]
+
+        def render_lidar_on_image(self, points, lidar2img):
+            points = points[:, :3]
+            proj_velo2cam2 = torch.from_numpy(lidar2img[:3])
+            pts_2d = self.project_to_image(points.transpose(1, 0),
+                                           proj_velo2cam2)
+            pts_2d = pts_2d.permute(1, 0)
+            pts_2d = torch.trunc(pts_2d).to(torch.long)
+
+            return pts_2d
+
+        def __call__(self, input_dict):
+            if self.phase == 'initial':
+                lidar2img = input_dict['lidar2img']
+                points = input_dict['points'].tensor
+                pts_2d = self.render_lidar_on_image(points, lidar2img)
+                input_dict['pts_2d'] = pts_2d
+                return input_dict
+
+            elif self.phase == 'resize':
+                scale_factor = input_dict['scale_factor']
+                pts_2d = input_dict['pts_2d']
+                pts_2d[:, 0] = (pts_2d[:, 0] * scale_factor[0]).to(torch.long)
+                pts_2d[:, 1] = (pts_2d[:, 1] * scale_factor[1]).to(torch.long)
+                input_dict['pts_2d'] = pts_2d
+                return input_dict
+
+            elif self.phase == 'flip':
+                if input_dict['flip']:
+                    w = input_dict['img'].shape[1]
+                    pts_2d = input_dict['pts_2d']
+                    pts_2d[:, 0] = (pts_2d[:, 0] - w + 1) * -1
+                    input_dict['pts_2d'] = pts_2d
+                    return input_dict
+                else:
+                    return input_dict
+
+            elif self.phase == 'points_range':
+                points_mask = input_dict['points_range_mask']
+                input_dict['pts_2d'] = input_dict['pts_2d'][points_mask]
+                return input_dict
+
+            elif self.phase == 'points_shuffle':
+                shuffle_inds = input_dict['shuffle_inds']
+                input_dict['pts_2d'] = input_dict['pts_2d'][shuffle_inds]
+                return input_dict

@@ -10,7 +10,7 @@ from .dla import DLA
 from .unetresnet import UnetResNet
 
 __all__ = [
-    'ResNet', 'ResNetV1d', 'ResNeXt', 'SSDVGG', 'HRNet', 'NoStemRegNet',
+    'ResNetV1d', 'ResNeXt', 'SSDVGG', 'HRNet', 'NoStemRegNet',
     'SECOND', 'PointNet2SASSG', 'PointNet2SAMSG', 'MultiBackbone',
-    'UNet', 'Res2Net', 'DLA', 'UnetResNet'
+    'UNet', 'Res2Net', 'DLA', 'UnetResNet', 'ResNet'
 ]

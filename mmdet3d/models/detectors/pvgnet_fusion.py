@@ -42,7 +42,7 @@ class PVGNetFusion(SingleStage3DDetector):
         self.img_neck = builder.build_neck(img_neck)
 
 
-    def extract_feat(self, points, img):
+    def extract_feat(self, points, img, img_metas):
         """Extract features from points."""
         # points feature
         voxels, num_points, coors = self.voxelize(points)
@@ -52,12 +52,37 @@ class PVGNetFusion(SingleStage3DDetector):
         point_feats = self.backbone(point_feats)
         if self.with_neck:
             point_feats = self.neck(point_feats)
+        point_feats = self.bev_to_points(points, point_feats, interp=self.bev_interp)
 
         # image feature
         img_feats = self.img_backbone(img)
         img_feats = self.img_neck(img_feats)
+
+        # fusion
+        num_levels = len(point_feats)
+        batch_size = img.shape[0]
+
+        fused_feats = []
+        for i in range(num_levels):
+            scale = img.shape[-1] / img_feats[i].shape[-1]
+            batch_feat = []
+            for j in range(batch_size):
+                img_meta = img_metas[j]
+                pts_2d = torch.trunc(img_meta['pts_2d'] / scale).to(torch.long)
+                point_feat = point_feats[i] # BxCxWxH
+                point_feat = point_feat[point_feat[:, 0] == j]
+                img_feat = img_feats[i][j] # BxCxHxW
+
+                point_feat = torch.cat([point_feat,
+                                        img_feat[:, pts_2d[:, 1], pts_2d[:, 0]].T],
+                                        dim=1)
+                batch_feat.append(point_feat)
+            batch_feat = torch.cat(batch_feat, dim=0)
+            # remove batch index
+            batch_feat = batch_feat[:, 1:]
+            fused_feats.append(batch_feat)
         
-        return point_feats, img_feats
+        return fused_feats
 
     @torch.no_grad()
     @force_fp32()
@@ -91,6 +116,7 @@ class PVGNetFusion(SingleStage3DDetector):
         Returns:
             pts_feats (list[torch.Tensor]): Point-wise features of all samples.
         """
+        device = points[0].device
         point_cloud_range = self.voxel_layer.point_cloud_range
         x_range = point_cloud_range[3] - point_cloud_range[0]
         y_range = point_cloud_range[4] - point_cloud_range[1]
@@ -101,7 +127,7 @@ class PVGNetFusion(SingleStage3DDetector):
         batch_idx = []
         for i in range(batch_size):
             batch_idx.append(torch.ones(num_pts[i]) * i)
-        batch_idx = torch.cat(batch_idx, dim=0).T.to(torch.long)
+        batch_idx = torch.cat(batch_idx, dim=0).T.to(torch.long).to(device)
         points = torch.cat(points, dim=0)[:, :3]
 
         pts_feats = []
@@ -130,12 +156,14 @@ class PVGNetFusion(SingleStage3DDetector):
                         else:
                             pts_feat += feat
                 pts_feat = torch.cat([points, pts_feat], dim=1)
+                pts_feat = torch.cat([batch_idx.reshape(-1, 1), pts_feat], dim=1)
                 pts_feats.append(pts_feat)
             else:
                 pts_feat = bev_feat[batch_idx, :, y_, x_]
                 pts_feat = torch.cat([points,
                                       bev_feat[batch_idx, :, y_, x_]],
                                       dim=1)
+                pts_feat = torch.cat([batch_idx.reshape(-1, 1), pts_feat], dim=1)
                 pts_feats.append(pts_feat)
         return pts_feats
 
@@ -161,11 +189,7 @@ class PVGNetFusion(SingleStage3DDetector):
         Returns:
             dict: Losses of each branch.
         """
-        x = self.extract_feat(points, img)
-        # bev_to_points 거치면
-        # x:     list[(B, C, H, W)] (len(x) == num_scales)
-        #     -> list[(N, C)] (len(x) == num_scales, N == num_points in all samples)
-        x = self.bev_to_points(points, x, interp=self.bev_interp)
+        x = self.extract_feat(points, img, img_metas)
         outs = self.bbox_head(x)
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
         losses = self.bbox_head.loss(
@@ -176,7 +200,6 @@ class PVGNetFusion(SingleStage3DDetector):
         gt_bboxes_3d=None, gt_labels_3d=None):
         """Test function without augmentaiton."""
         x = self.extract_feat(points)
-        x = self.bev_to_points(points, x, interp=self.bev_interp)
         outs = self.bbox_head(x)
         bbox_list = self.bbox_head.get_bboxes(
             points, *outs, img_metas, rescale=rescale,

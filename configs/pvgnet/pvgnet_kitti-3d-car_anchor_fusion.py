@@ -53,8 +53,8 @@ model = dict(
         anchor_cfg =dict(size=[1.6, 3.9, 1.56],
                          rotation=[1.57]),
         num_classes=1,
-        in_channels=387,
-        feat_channels=387,
+        in_channels=643,
+        feat_channels=643,
         use_direction_classifier=True,
         diff_rad_by_sin=True,
         bbox_coder=dict(type='PVGNetBBoxCoder', normalize=False),
@@ -104,33 +104,39 @@ img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 
 train_pipeline = [
-    # Image pipeline
     dict(type='LoadImageFromFile', to_float32=True),
+    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
+    dict(type='ImagePointsMatching', phase='initial'),
+    # Image pipeline
     dict(type='LoadAnnotations', with_bbox=True),
     dict(type='Resize', img_scale=img_size, keep_ratio=True),
+    dict(type='ImagePointsMatching', phase='resize'),
     dict(type='RandomFlip', flip_ratio=0.5),
+    dict(type='ImagePointsMatching', phase='flip'),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
     # Point pipeline
-    dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
-    dict(type='ObjectSample', db_sampler=db_sampler),
-    dict(
-        type='ObjectNoise',
-        num_try=100,
-        translation_std=[0.25, 0.25, 0.25],
-        global_rot_range=[0.0, 0.0],
-        rot_range=[-0.15707963267, 0.15707963267]),
+    # dict(type='ObjectSample', db_sampler=db_sampler),
+    # dict(
+    #     type='ObjectNoise',
+    #     num_try=100,
+    #     translation_std=[0.25, 0.25, 0.25],
+    #     global_rot_range=[0.0, 0.0],
+    #     rot_range=[-0.15707963267, 0.15707963267]),
     dict(type='RandomFlip3D', sync_2d=True),
     dict(
         type='GlobalRotScaleTrans',
         rot_range=[-0.78539816, 0.78539816],
         scale_ratio_range=[0.95, 1.05]),
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
+    dict(type='ImagePointsMatching', phase='points_range'),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='PointShuffle'),
+    dict(type='ImagePointsMatching', phase='points_shuffle'),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
-    dict(type='Collect3D', keys=['points', 'img', 'gt_bboxes_3d', 'gt_labels_3d'])
+    dict(type='Collect3D', keys=['points', 'img', 'gt_bboxes_3d', 'gt_labels_3d'],
+                           meta_keys=['filename', 'pts_filename', 'img_info', 'pts_2d'])
 ]
 test_pipeline = [
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
