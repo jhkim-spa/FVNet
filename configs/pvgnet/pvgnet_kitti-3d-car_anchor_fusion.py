@@ -81,6 +81,7 @@ test_cfg = dict(
     score_thr=0.5,
     min_bbox_size=0,
     max_num=50)
+find_unused_parameters = True
 ##############################################################################################
 ######################################## Dataset #############################################
 ##############################################################################################
@@ -108,6 +109,12 @@ train_pipeline = [
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     dict(type='ImagePointsMatching', phase='initial'),
     # Image pipeline
+    dict(
+        type='PhotoMetricDistortion',
+        brightness_delta=32,
+        contrast_range=(0.5, 1.5),
+        saturation_range=(0.5, 1.5),
+        hue_delta=18),
     dict(type='LoadAnnotations', with_bbox=True),
     dict(type='Resize', img_scale=img_size, keep_ratio=True),
     dict(type='ImagePointsMatching', phase='resize'),
@@ -136,31 +143,38 @@ train_pipeline = [
     dict(type='ImagePointsMatching', phase='points_shuffle'),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(type='Collect3D', keys=['points', 'img', 'gt_bboxes_3d', 'gt_labels_3d'],
-                           meta_keys=['filename', 'pts_filename', 'img_info', 'pts_2d'])
+                           meta_keys=['box_type_3d', 'filename', 'pts_filename', 'img_info', 'pts_2d'])
 ]
 test_pipeline = [
+    dict(type='LoadImageFromFile', to_float32=True),
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
-    # dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
+    dict(type='ImagePointsMatching', phase='initial'),
     dict(
         type='MultiScaleFlipAug3D',
-        img_scale=(1333, 800),
+        img_scale=img_size,
         pts_scale_ratio=1,
         flip=False,
         transforms=[
+            dict(type='Resize', img_scale=img_size, keep_ratio=True),
+            dict(type='RandomFlip'),
+            dict(type='ImagePointsMatching', phase='resize'),
+            dict(type='Normalize', **img_norm_cfg),
+            dict(type='Pad', size_divisor=32),
+            # Point pipeline
             dict(
                 type='GlobalRotScaleTrans',
                 rot_range=[0, 0],
                 scale_ratio_range=[1., 1.],
                 translation_std=[0, 0, 0]),
+            dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
             dict(type='RandomFlip3D'),
-            dict(
-                type='PointsRangeFilter', point_cloud_range=point_cloud_range),
+            dict(type='ImagePointsMatching', phase='points_range'),
             dict(
                 type='DefaultFormatBundle3D',
                 class_names=class_names,
                 with_label=False),
-            dict(type='Collect3D', keys=['points'])
-            # dict(type='Collect3D', keys=['points', 'gt_bboxes_3d', 'gt_labels_3d'])
+            dict(type='Collect3D', keys=['points', 'img'],
+                    meta_keys=['box_type_3d', 'filename', 'pts_filename', 'img_info', 'pts_2d'])
         ])
 ]
 
@@ -174,6 +188,7 @@ data = dict(
             type=dataset_type,
             data_root=data_root,
             ann_file=data_root + 'kitti_infos_train.pkl',
+            # ann_file=data_root + 'kitti_infos_debug.pkl',
             split='training',
             pts_prefix='velodyne_reduced',
             pipeline=train_pipeline,
@@ -185,6 +200,7 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'kitti_infos_val.pkl',
+        # ann_file=data_root + 'kitti_infos_debug.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,

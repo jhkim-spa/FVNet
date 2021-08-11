@@ -199,7 +199,7 @@ class PVGNetFusion(SingleStage3DDetector):
     def simple_test(self, points, img_metas, imgs=None, rescale=False,
         gt_bboxes_3d=None, gt_labels_3d=None):
         """Test function without augmentaiton."""
-        x = self.extract_feat(points)
+        x = self.extract_feat(points, imgs, img_metas)
         outs = self.bbox_head(x)
         bbox_list = self.bbox_head.get_bboxes(
             points, *outs, img_metas, rescale=rescale,
