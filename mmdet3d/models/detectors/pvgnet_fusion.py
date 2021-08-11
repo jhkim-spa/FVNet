@@ -62,6 +62,16 @@ class PVGNetFusion(SingleStage3DDetector):
         num_levels = len(point_feats)
         batch_size = img.shape[0]
 
+        # align test
+        import matplotlib.pyplot as plt
+        pts_2d = img_metas[0]['pts_2d']
+        img = img[0].cpu()
+        img[0, pts_2d[:, 1], pts_2d[:, 0]] = 255
+
+        plt.imshow(img.permute(1, 2, 0))
+        plt.savefig('img.png', dpi=300)
+        plt.cla()
+
         fused_feats = []
         for i in range(num_levels):
             scale = img.shape[-1] / img_feats[i].shape[-1]

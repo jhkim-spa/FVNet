@@ -118,20 +118,12 @@ train_pipeline = [
     dict(type='LoadAnnotations', with_bbox=True),
     dict(type='Resize', img_scale=img_size, keep_ratio=True),
     dict(type='ImagePointsMatching', phase='resize'),
-    dict(type='RandomFlip', flip_ratio=0.5),
-    dict(type='ImagePointsMatching', phase='flip'),
     dict(type='Normalize', **img_norm_cfg),
     dict(type='Pad', size_divisor=32),
     # Point pipeline
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
-    # dict(type='ObjectSample', db_sampler=db_sampler),
-    # dict(
-    #     type='ObjectNoise',
-    #     num_try=100,
-    #     translation_std=[0.25, 0.25, 0.25],
-    #     global_rot_range=[0.0, 0.0],
-    #     rot_range=[-0.15707963267, 0.15707963267]),
-    dict(type='RandomFlip3D', sync_2d=True),
+    dict(type='RandomFlip3D', sync_2d=True, flip_ratio_bev_horizontal=0.5),
+    dict(type='ImagePointsMatching', phase='flip'),
     dict(
         type='GlobalRotScaleTrans',
         rot_range=[-0.78539816, 0.78539816],
