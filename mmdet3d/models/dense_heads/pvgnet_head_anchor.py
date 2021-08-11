@@ -128,6 +128,7 @@ class PVGAnchorHead(nn.Module, AnchorTrainMixin):
         dir_cls_preds = None
         if self.use_direction_classifier:
             dir_cls_preds = self.dir_cls_layer(x)
+
         return cls_score, bbox_pred, dir_cls_preds
 
     def forward(self, feats):
