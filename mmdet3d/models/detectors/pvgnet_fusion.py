@@ -15,6 +15,7 @@ class PVGNetFusion(SingleStage3DDetector):
     def __init__(self,
                  img_backbone,
                  img_neck,
+                 img_interp,
                  bev_interp,
                  voxel_layer,
                  voxel_encoder,
@@ -33,6 +34,7 @@ class PVGNetFusion(SingleStage3DDetector):
             test_cfg=test_cfg,
             pretrained=pretrained,
         )
+        self.img_interp = img_interp
         self.bev_interp = bev_interp
         self.voxel_layer = Voxelization(**voxel_layer)
         self.voxel_encoder = builder.build_voxel_encoder(voxel_encoder)
@@ -41,10 +43,61 @@ class PVGNetFusion(SingleStage3DDetector):
         self.img_backbone = builder.build_backbone(img_backbone)
         self.img_neck = builder.build_neck(img_neck)
 
+    def bilinear_interpolate_torch(self, im, x, y, batch_idx=None):
+        """
+        Args:
+            im: (H, W, C) [y, x]
+            x: (N)
+            y: (N)
+
+        Returns:
+
+        """
+        if batch_idx is not None:
+            batch = True
+        else:
+            batch = False
+
+        x0 = torch.floor(x).long()
+        x1 = x0 + 1
+
+        y0 = torch.floor(y).long()
+        y1 = y0 + 1
+
+
+        if not batch:
+            x0 = torch.clamp(x0, 0, im.shape[1] - 1)
+            x1 = torch.clamp(x1, 0, im.shape[1] - 1)
+            y0 = torch.clamp(y0, 0, im.shape[0] - 1)
+            y1 = torch.clamp(y1, 0, im.shape[0] - 1)
+
+            Ia = im[y0, x0]
+            Ib = im[y1, x0]
+            Ic = im[y0, x1]
+            Id = im[y1, x1]
+        else:
+            x0 = torch.clamp(x0, 0, im.shape[2] - 1)
+            x1 = torch.clamp(x1, 0, im.shape[2] - 1)
+            y0 = torch.clamp(y0, 0, im.shape[1] - 1)
+            y1 = torch.clamp(y1, 0, im.shape[1] - 1)
+
+            Ia = im[batch_idx, y0, x0]
+            Ib = im[batch_idx, y1, x0]
+            Ic = im[batch_idx, y0, x1]
+            Id = im[batch_idx, y1, x1]
+
+
+        wa = (x1.type_as(x) - x) * (y1.type_as(y) - y)
+        wb = (x1.type_as(x) - x) * (y - y0.type_as(y))
+        wc = (x - x0.type_as(x)) * (y1.type_as(y) - y)
+        wd = (x - x0.type_as(x)) * (y - y0.type_as(y))
+        ans = torch.t((torch.t(Ia) * wa)) + torch.t(torch.t(Ib) * wb) + torch.t(torch.t(Ic) * wc) + torch.t(torch.t(Id) * wd)
+        return ans
 
     def extract_feat(self, points, img, img_metas):
         """Extract features from points."""
         # points feature
+        device = img.device
         voxels, num_points, coors = self.voxelize(points)
         voxel_features = self.voxel_encoder(voxels, num_points, coors)
         batch_size = coors[-1, 0].item() + 1
@@ -67,16 +120,33 @@ class PVGNetFusion(SingleStage3DDetector):
             scale = img.shape[-1] / img_feats[i].shape[-1]
             batch_feat = []
             for j in range(batch_size):
-                img_meta = img_metas[j]
-                pts_2d = torch.trunc(img_meta['pts_2d'] / scale).to(torch.long)
-                point_feat = point_feats[i] # BxCxWxH
-                point_feat = point_feat[point_feat[:, 0] == j]
-                img_feat = img_feats[i][j] # BxCxHxW
-
-                point_feat = torch.cat([point_feat,
-                                        img_feat[:, pts_2d[:, 1], pts_2d[:, 0]].T],
-                                        dim=1)
-                batch_feat.append(point_feat)
+                if self.img_interp:
+                    img_meta = img_metas[j]
+                    point_feat = point_feats[i] # BxCxWxH
+                    point_feat = point_feat[point_feat[:, 0] == j]
+                    img_feat = img_feats[i][j] # BxCxHxW
+                    pts_2d = img_meta['pts_2d'].to(torch.float).to(device)
+                    pts_2d[:, 0] = torch.floor(pts_2d[:, 0] * (img_feat.shape[2] - 1) / img.shape[3]).to(torch.long)
+                    pts_2d[:, 1] = torch.floor(pts_2d[:, 1] * (img_feat.shape[1] - 1) / img.shape[2]).to(torch.long)
+                    img_feat = img_feat.permute(1, 2, 0).contiguous()
+                    img_feat = self.bilinear_interpolate_torch(img_feat,
+                                                               pts_2d[:, 0],
+                                                               pts_2d[:, 1])
+                    point_feat = torch.cat([point_feat, img_feat], dim=1)
+                    batch_feat.append(point_feat)
+                else:
+                    img_meta = img_metas[j]
+                    # pts_2d = torch.floor(img_meta['pts_2d'] / scale).to(torch.long)
+                    point_feat = point_feats[i] # BxCxWxH
+                    point_feat = point_feat[point_feat[:, 0] == j]
+                    img_feat = img_feats[i][j] # BxCxHxW
+                    pts_2d = img_meta['pts_2d'].to(torch.float).to(device)
+                    pts_2d[:, 0] = torch.floor(pts_2d[:, 0] * (img_feat.shape[2] - 1) / img.shape[3]).to(torch.long)
+                    pts_2d[:, 1] = torch.floor(pts_2d[:, 1] * (img_feat.shape[1] - 1) / img.shape[2]).to(torch.long)
+                    point_feat = torch.cat([point_feat,
+                                            img_feat[:, pts_2d[:, 1], pts_2d[:, 0]].T],
+                                            dim=1)
+                    batch_feat.append(point_feat)
             batch_feat = torch.cat(batch_feat, dim=0)
             # remove batch index
             batch_feat = batch_feat[:, 1:]
@@ -136,25 +206,33 @@ class PVGNetFusion(SingleStage3DDetector):
             bev_shape = bev_feat.shape[2:]
             # x,  y  -> continuous 
             # x_, y_ -> discrete
-            x = points[:, 0] * bev_shape[1] / x_range
-            y = (points[:, 1] - point_cloud_range[1]) * bev_shape[0] / y_range
+            x = points[:, 0] * (bev_shape[1] - 1) / x_range
+            y = (points[:, 1] - point_cloud_range[1]) * (bev_shape[0] - 1) / y_range
             x_ = torch.ceil(x - 1).to(torch.long) # 정수일 때 trunc와 다름
             y_ = torch.ceil(y - 1).to(torch.long)
             if interp:
+                ########################bilinear########################
+                # bev_feat = bev_feat.permute(0, 2, 3, 1).contiguous()
+                # pts_feat = self.bilinear_interpolate_torch(bev_feat,
+                #                                            x, y, batch_idx)
+                bev_feat = bev_feat.permute(0, 2, 3, 1).contiguous()
+                pts_feat = self.bilinear_interpolate_torch(bev_feat,
+                                                           x, y, batch_idx)
+                ########################################################
                 # 끝 쪽 feature들은 8개의 neighboring feature들이 모두 존재하지 않으므로 제로 패딩
-                bev_feat = F.pad(input=bev_feat, pad=(1, 1, 1, 1), mode='constant', value=0)
-                pts_feat = None
-                for i in [-1, 0, 1]:
-                    for j in [-1, 0, 1]:
-                        distance = torch.sqrt((x - (x_ + j))**2 + (y - (y_ + i))**2)
-                        feat = bev_feat[batch_idx, :, y_ + i + 1, x_ + j + 1] # 패딩된 상태이므로 +1
-                        feat = (1 / (2*distance + 1)).unsqueeze(-1) * feat
-                        # 리스트에 모아서 한번에 더해주면 메모리 소비가 커서
-                        # 바로 바로 더해 줌
-                        if pts_feat is None:
-                            pts_feat = feat
-                        else:
-                            pts_feat += feat
+                # bev_feat = F.pad(input=bev_feat, pad=(1, 1, 1, 1), mode='constant', value=0)
+                # pts_feat = None
+                # for i in [-1, 0, 1]:
+                #     for j in [-1, 0, 1]:
+                #         distance = torch.sqrt((x - (x_ + j))**2 + (y - (y_ + i))**2)
+                #         feat = bev_feat[batch_idx, :, y_ + i + 1, x_ + j + 1] # 패딩된 상태이므로 +1
+                #         feat = (1 / (2*distance + 1)).unsqueeze(-1) * feat
+                #         # 리스트에 모아서 한번에 더해주면 메모리 소비가 커서
+                #         # 바로 바로 더해 줌
+                #         if pts_feat is None:
+                #             pts_feat = feat
+                #         else:
+                #             pts_feat += feat
                 pts_feat = torch.cat([points, pts_feat], dim=1)
                 pts_feat = torch.cat([batch_idx.reshape(-1, 1), pts_feat], dim=1)
                 pts_feats.append(pts_feat)
@@ -173,6 +251,8 @@ class PVGNetFusion(SingleStage3DDetector):
                       img_metas,
                       gt_bboxes_3d,
                       gt_labels_3d,
+                      gt_bboxes=None,
+                      gt_labels=None,
                       gt_bboxes_ignore=None):
         """Training forward function.
 
@@ -194,6 +274,7 @@ class PVGNetFusion(SingleStage3DDetector):
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
         losses = self.bbox_head.loss(
             *loss_inputs, points, gt_bboxes_ignore=gt_bboxes_ignore)
+        
         return losses
 
     def simple_test(self, points, img_metas, imgs=None, rescale=False,

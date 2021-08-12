@@ -22,7 +22,6 @@ model = dict(
         add_extra_convs='on_input',
         num_outs=5),
     # Point Nektwork
-    img_interp=True,
     bev_interp=True,
     voxel_layer=dict(
         max_num_points=32,
@@ -60,7 +59,6 @@ model = dict(
         diff_rad_by_sin=True,
         bbox_coder=dict(type='PVGNetBBoxCoder', normalize=False),
         fg_weight=1,
-        seperate_layer=False,
         loss_cls=dict(
             type='FocalLoss',
             use_sigmoid=True,
@@ -126,10 +124,10 @@ train_pipeline = [
     dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
     dict(type='RandomFlip3D', sync_2d=True, flip_ratio_bev_horizontal=0.5),
     dict(type='ImagePointsMatching', phase='flip'),
-    dict(
-        type='GlobalRotScaleTrans',
-        rot_range=[-0.78539816, 0.78539816],
-        scale_ratio_range=[0.95, 1.05]),
+    # dict(
+    #     type='GlobalRotScaleTrans',
+    #     rot_range=[-0.78539816, 0.78539816],
+    #     scale_ratio_range=[0.95, 1.05]),
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ImagePointsMatching', phase='points_range'),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
@@ -137,8 +135,7 @@ train_pipeline = [
     dict(type='ImagePointsMatching', phase='points_shuffle'),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
     dict(type='Collect3D', keys=['points', 'img', 'gt_bboxes_3d', 'gt_labels_3d'],
-                           meta_keys=['box_type_3d', 'filename', 'pts_filename',
-                                      'img_info', 'pts_2d'])
+                           meta_keys=['box_type_3d', 'filename', 'pts_filename', 'img_info', 'pts_2d'])
 ]
 test_pipeline = [
     dict(type='LoadImageFromFile', to_float32=True),

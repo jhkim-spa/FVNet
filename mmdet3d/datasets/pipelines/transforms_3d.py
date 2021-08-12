@@ -1163,7 +1163,7 @@ class RandomFlipFV(object):
             pts_2d = self.project_to_image(points.transpose(1, 0),
                                            proj_velo2cam2)
             pts_2d = pts_2d.permute(1, 0)
-            pts_2d = torch.trunc(pts_2d).to(torch.long)
+            pts_2d = torch.floor(pts_2d).to(torch.long)
 
             return pts_2d
 
