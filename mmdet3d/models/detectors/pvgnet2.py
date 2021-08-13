@@ -164,7 +164,7 @@ class PVGNet2(SingleStage3DDetector):
         Returns:
             dict: Losses of each branch.
         """
-        x = self.extract_feat(points)
+        # x = self.extract_feat(points)
         # bev_to_points 거치면
         # x:     list[(B, C, H, W)] (len(x) == num_scales)
         #     -> list[(N, C)] (len(x) == num_scales, N == num_points in all samples)
@@ -173,13 +173,21 @@ class PVGNet2(SingleStage3DDetector):
         voxels, num_points, coors = self.voxelize2(points)
         voxel_features = self.voxel_encoder2(voxels, num_points, coors)
         coors = coors.to(torch.long)
-        bev_feats = x[0][coors[:, 0], :, coors[:, 2], coors[:, 3]]
+        # bev_feats = x[0][coors[:, 0], :, coors[:, 2], coors[:, 3]]
 
         anchor_points = coors[:, [0, 2, 3]].to(torch.float32)
         anchor_points[:, 1] = (anchor_points[:, 1] + 0.5) * 79.36 / 248 - 39.68
         anchor_points[:, 2] = (anchor_points[:, 2] + 0.5) * 69.12 / 216
 
-        x = [torch.cat([voxel_features, bev_feats], dim=1)]
+        z = torch.ones((anchor_points.shape[0], 1), dtype=torch.float32,
+            device=coors.device) * (-1.7 + 1.56/2)
+        xyz = torch.cat([anchor_points[:, [2]], anchor_points[:, [1]], z], dim=1)
+        # x = [torch.cat([xyz, voxel_features, bev_feats], dim=1)]
+
+
+
+        # test
+        x = [torch.cat([xyz, voxel_features], dim=1)]
 
         ###############################################################
         outs = self.bbox_head(x)
@@ -210,18 +218,26 @@ class PVGNet2(SingleStage3DDetector):
     def simple_test(self, points, img_metas, imgs=None, rescale=False,
         gt_bboxes_3d=None, gt_labels_3d=None):
         """Test function without augmentaiton."""
-        x = self.extract_feat(points)
+        # x = self.extract_feat(points)
         ##########################################################
         voxels, num_points, coors = self.voxelize2(points)
         voxel_features = self.voxel_encoder2(voxels, num_points, coors)
         coors = coors.to(torch.long)
-        bev_feats = x[0][coors[:, 0], :, coors[:, 2], coors[:, 3]]
+        # bev_feats = x[0][coors[:, 0], :, coors[:, 2], coors[:, 3]]
 
         anchor_points = coors[:, [0, 2, 3]].to(torch.float32)
         anchor_points[:, 1] = (anchor_points[:, 1] + 0.5) * 79.36 / 248 - 39.68
         anchor_points[:, 2] = (anchor_points[:, 2] + 0.5) * 69.12 / 216
 
-        x = [torch.cat([voxel_features, bev_feats], dim=1)]
+        z = torch.ones((anchor_points.shape[0], 1), dtype=torch.float32,
+            device=coors.device) * (-1.7 + 1.56/2)
+        xyz = torch.cat([anchor_points[:, [2]], anchor_points[:, [1]], z], dim=1)
+        # x = [torch.cat([xyz, voxel_features, bev_feats], dim=1)]
+
+
+
+        # test
+        x = [torch.cat([xyz, voxel_features], dim=1)]
         ############################################################
         outs = self.bbox_head(x)
         bbox_list = self.bbox_head.get_bboxes(
