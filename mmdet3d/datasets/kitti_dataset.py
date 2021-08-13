@@ -130,7 +130,10 @@ class KittiDataset(Custom3DDataset):
             img_info=dict(filename=img_filename,
                           width=width,
                           height=height),
-            lidar2img=lidar2img)
+            lidar2img=lidar2img,
+            calib_info=dict(P2=P2,
+                            rect=rect,
+                            velo2cam=Trv2c))
 
         # if not self.test_mode:
         annos = self.get_ann_info(index)

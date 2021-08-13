@@ -1,4 +1,3 @@
-import mmcv
 import numpy as np
 from mmcv import is_tuple_of
 from mmcv.utils import build_from_cfg
@@ -11,6 +10,7 @@ from mmdet.datasets.builder import PIPELINES
 from mmdet.datasets.pipelines import RandomFlip
 from ..registry import OBJECTSAMPLERS
 from .data_augment_utils import noise_per_object_v3_
+import numba
 
 
 @PIPELINES.register_module()
@@ -1143,62 +1143,169 @@ class RandomFlipFV(object):
         return repr_str
     
 
-    @PIPELINES.register_module()
-    class ImagePointsMatching(object):
+@PIPELINES.register_module()
+class ImagePointsMatching(object):
 
-        def __init__(self, phase):
-            self.phase = phase
-        
-        def project_to_image(self, points, proj_mat):
-            num_pts = points.shape[1]
+    def __init__(self, phase):
+        self.phase = phase
+    
+    def project_to_image(self, points, proj_mat):
+        num_pts = points.shape[1]
 
-            points = torch.cat((points, torch.ones((1, num_pts))))
-            points = proj_mat @ points
-            points[:2, :] /= points[2, :]
-            return points[:2, :]
+        points = torch.cat((points, torch.ones((1, num_pts))))
+        points = proj_mat @ points
+        points[:2, :] /= points[2, :]
+        return points[:2, :]
 
-        def render_lidar_on_image(self, points, lidar2img):
-            points = points[:, :3]
-            proj_velo2cam2 = torch.from_numpy(lidar2img[:3])
-            pts_2d = self.project_to_image(points.transpose(1, 0),
-                                           proj_velo2cam2)
-            pts_2d = pts_2d.permute(1, 0)
-            pts_2d = torch.floor(pts_2d).to(torch.long)
+    def render_lidar_on_image(self, points, lidar2img):
+        points = points[:, :3]
+        proj_velo2cam2 = torch.from_numpy(lidar2img[:3])
+        pts_2d = self.project_to_image(points.transpose(1, 0),
+                                        proj_velo2cam2)
+        pts_2d = pts_2d.permute(1, 0)
+        pts_2d = torch.floor(pts_2d).to(torch.long)
 
-            return pts_2d
+        return pts_2d
 
-        def __call__(self, input_dict):
-            if self.phase == 'initial':
-                lidar2img = input_dict['lidar2img']
-                points = input_dict['points'].tensor
-                pts_2d = self.render_lidar_on_image(points, lidar2img)
-                input_dict['pts_2d'] = pts_2d
-                return input_dict
+    def __call__(self, input_dict):
+        if self.phase == 'initial':
+            lidar2img = input_dict['lidar2img']
+            points = input_dict['points'].tensor
+            pts_2d = self.render_lidar_on_image(points, lidar2img)
+            input_dict['pts_2d'] = pts_2d
+            return input_dict
 
-            elif self.phase == 'resize':
-                scale_factor = input_dict['scale_factor']
+        elif self.phase == 'resize':
+            scale_factor = input_dict['scale_factor']
+            pts_2d = input_dict['pts_2d']
+            pts_2d[:, 0] = (pts_2d[:, 0] * scale_factor[0]).to(torch.long)
+            pts_2d[:, 1] = (pts_2d[:, 1] * scale_factor[1]).to(torch.long)
+            input_dict['pts_2d'] = pts_2d
+            return input_dict
+
+        elif self.phase == 'flip':
+            if input_dict['flip']:
+                w = input_dict['img'].shape[1]
                 pts_2d = input_dict['pts_2d']
-                pts_2d[:, 0] = (pts_2d[:, 0] * scale_factor[0]).to(torch.long)
-                pts_2d[:, 1] = (pts_2d[:, 1] * scale_factor[1]).to(torch.long)
+                pts_2d[:, 0] = (pts_2d[:, 0] - w + 1) * -1
                 input_dict['pts_2d'] = pts_2d
                 return input_dict
-
-            elif self.phase == 'flip':
-                if input_dict['flip']:
-                    w = input_dict['img'].shape[1]
-                    pts_2d = input_dict['pts_2d']
-                    pts_2d[:, 0] = (pts_2d[:, 0] - w + 1) * -1
-                    input_dict['pts_2d'] = pts_2d
-                    return input_dict
-                else:
-                    return input_dict
-
-            elif self.phase == 'points_range':
-                points_mask = input_dict['points_range_mask']
-                input_dict['pts_2d'] = input_dict['pts_2d'][points_mask]
+            else:
                 return input_dict
 
-            elif self.phase == 'points_shuffle':
-                shuffle_inds = input_dict['shuffle_inds']
-                input_dict['pts_2d'] = input_dict['pts_2d'][shuffle_inds]
-                return input_dict
+        elif self.phase == 'points_range':
+            points_mask = input_dict['points_range_mask']
+            input_dict['pts_2d'] = input_dict['pts_2d'][points_mask]
+            return input_dict
+
+        elif self.phase == 'points_shuffle':
+            shuffle_inds = input_dict['shuffle_inds']
+            input_dict['pts_2d'] = input_dict['pts_2d'][shuffle_inds]
+            return input_dict
+
+
+@PIPELINES.register_module()
+class DepthToLidarPoints(object):
+    def __call__(self, input_dict):
+        depth = input_dict['depth']
+        P2 = input_dict['calib_info']['P2']
+        r_rect = input_dict['calib_info']['rect']
+        velo2cam = input_dict['calib_info']['velo2cam']
+        depth = np.array(depth)
+        lidar_points = self.depth_to_lidar_points(
+            depth[0], 0, P2, r_rect, velo2cam)
+        input_dict['pseudo_lidar'] = lidar_points
+        return input_dict
+
+    def depth_to_points(self, depth, trunc_pixel):
+        points = np.ones((3, depth.shape[0], depth.shape[1]), dtype=depth.dtype)
+        points[0, :, :] = np.tile(np.array(range(depth.shape[1])).reshape(1, -1),
+                                 (depth.shape[0], 1))
+        points[1, :, :] = np.tile(np.array(range(depth.shape[0])).reshape(-1, 1),
+                                 (1, depth.shape[1]))
+        lidar_points = points * depth
+        return lidar_points
+
+    def camera_to_lidar(self, points, r_rect, velo2cam):
+        points_shape = list(points.shape[0:-1])
+        if points.shape[-1] == 3:
+            points = np.concatenate([points, np.ones(points_shape + [1])], axis=-1)
+        lidar_points = points @ np.linalg.inv((r_rect @ velo2cam).T)
+        return lidar_points[..., :3]
+
+    def depth_to_lidar_points(self, depth, trunc_pixel, P2, r_rect, velo2cam):
+        pts = self.depth_to_points(depth, trunc_pixel)
+        ori_shape = pts.shape
+        pts = pts.reshape(3, -1).T
+        points_shape = list(pts.shape[0:-1])
+        points = np.concatenate([pts, np.ones(points_shape + [1])], axis=-1)
+        points = points @ np.linalg.inv(P2.T)
+        lidar_points = self.camera_to_lidar(points, r_rect, velo2cam)
+        # lidar_points = lidar_points.T.reshape(ori_shape)
+        return lidar_points
+
+
+@PIPELINES.register_module()
+class PsuedoPointsRangeFilter(object):
+    """Filter points by the range.
+
+    Args:
+        point_cloud_range (list[float]): Point cloud range.
+    """
+
+    def __init__(self, point_cloud_range):
+        self.pcd_range = np.array(point_cloud_range, dtype=np.float32)
+
+    def __call__(self, input_dict):
+        """Call function to filter points by the range.
+
+        Args:
+            input_dict (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Results after filtering, 'points' keys are updated \
+                in the result dict.
+        """
+        pseudo_lidar = input_dict['pseudo_lidar']
+        ignore_mask = np.where(
+            (pseudo_lidar[:, 0] < self.pcd_range[0]) |
+            (pseudo_lidar[:, 1] < self.pcd_range[1]) |
+            (pseudo_lidar[:, 2] < self.pcd_range[2]) |
+            (pseudo_lidar[:, 0] > self.pcd_range[3]) |
+            (pseudo_lidar[:, 1] > self.pcd_range[4]) |
+            (pseudo_lidar[:, 2] > self.pcd_range[5])
+        )[0]
+        pseudo_lidar[ignore_mask, :] = -1
+        return input_dict
+
+
+@PIPELINES.register_module()
+class PseudoPointsFlip(object):
+    def __call__(self, input_dict):
+        if input_dict['pcd_horizontal_flip']:
+            input_dict['pseudo_lidar'][:, 1] *= -1
+        return input_dict
+
+
+@PIPELINES.register_module()
+class PseudoPointsRotScale(object):
+    def __call__(self, input_dict):
+        rotation = np.array(input_dict['pcd_rotation'])
+        scale = input_dict['pcd_scale_factor']
+        pseudo_lidar = input_dict['pseudo_lidar']
+        pseudo_lidar = pseudo_lidar @ rotation
+        pseudo_lidar *= scale
+        input_dict['pseudo_lidar'] = pseudo_lidar
+        return input_dict
+
+
+@PIPELINES.register_module()
+class PseudoPointsToImage(object):
+    def __call__(self, input_dict):
+        img_shape = input_dict['img_shape']
+        pseudo_lidar = input_dict['pseudo_lidar']
+        pseudo_lidar = pseudo_lidar.T.reshape(img_shape[2],
+                                              img_shape[0],
+                                              img_shape[1])
+        input_dict['pseudo_lidar'] = pseudo_lidar
+        return input_dict

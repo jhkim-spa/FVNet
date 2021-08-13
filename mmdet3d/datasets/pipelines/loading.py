@@ -5,6 +5,10 @@ from mmdet3d.core.points import BasePoints, get_points_type
 from mmdet.datasets.builder import PIPELINES
 from mmdet.datasets.pipelines import LoadAnnotations
 
+import os.path as osp
+from PIL import Image
+import torchvision.transforms as transforms
+
 
 @PIPELINES.register_module()
 class LoadMultiViewImageFromFiles(object):
@@ -566,3 +570,33 @@ class LoadAnnotations3D(LoadAnnotations):
         repr_str += f'{indent_str}with_seg={self.with_seg}, '
         repr_str += f'{indent_str}poly2mask={self.poly2mask})'
         return repr_str
+
+
+@PIPELINES.register_module()
+class LoadDepthFromFile(object):
+    def __init__(self,
+                 size,
+                 file_client_args=dict(backend='disk')):
+        self.file_client_args = file_client_args.copy()
+        self.file_client = None
+        self.size = size
+
+    def __call__(self, results):
+        if self.file_client is None:
+            self.file_client = mmcv.FileClient(**self.file_client_args)
+
+        if results['img_prefix'] is not None:
+            filename = osp.join(results['img_prefix'],
+                                results['img_info']['filename'])
+        else:
+            filename = results['img_info']['filename']
+
+        filename = '/'.join(filename.split('/')[:3] + ['dense_depth'] + filename.split('/')[-1:])
+        depth = Image.open(filename)
+        tf_resize = transforms.Resize(size=self.size[::-1])
+        tf_totensor = transforms.ToTensor()
+        depth = tf_resize(depth)
+        depth = tf_totensor(depth) / 255.
+        results['depth'] = depth
+        return results
+    
