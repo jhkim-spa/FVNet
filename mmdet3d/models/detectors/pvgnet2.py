@@ -1,13 +1,15 @@
 import torch
 from mmcv.runner import force_fp32
+from torch._C import device
 from torch.nn import functional as F
 
-from mmdet3d.core import bbox3d2result, merge_aug_bboxes_3d
+from mmdet3d.core import bbox3d2result
 from mmdet3d.ops import Voxelization
 from mmdet.models import DETECTORS
-from .. import builder
 from mmdet3d.models.builder import build_voxel_encoder, build_middle_encoder, build_backbone
 from .single_stage import SingleStage3DDetector
+from torch.nn import UpsamplingNearest2d
+import torch.nn as nn
 
 
 @DETECTORS.register_module()
@@ -22,6 +24,8 @@ class PVGNet2(SingleStage3DDetector):
                  neck=None,
                  voxel_layer2=None,
                  voxel_encoder2=None,
+                 voxel_layer3=None,
+                 voxel_encoder3=None,
                  img_backbone=None,
                  bbox_head=None,
                  train_cfg=None,
@@ -43,8 +47,16 @@ class PVGNet2(SingleStage3DDetector):
 
         self.voxel_layer2 = Voxelization(**voxel_layer2)
         self.voxel_encoder2 = build_voxel_encoder(voxel_encoder2)
+        self.voxel_layer3 = Voxelization(**voxel_layer3)
+        self.voxel_encoder3 = build_voxel_encoder(voxel_encoder3)
 
         self.img_backbone = build_backbone(img_backbone)
+
+        self.channel_reduct = nn.Linear(448, 256)
+        self.alpha = nn.Parameter(torch.randn(1))
+        self.beta = nn.Parameter(torch.randn(1))
+
+        # self.weight_conv = nn.Conv2d(1, 1, 1)
 
     @torch.no_grad()
     @force_fp32()
@@ -65,7 +77,7 @@ class PVGNet2(SingleStage3DDetector):
         coors_batch = torch.cat(coors_batch, dim=0)
         return voxels, num_points, coors_batch
 
-    def extract_feat(self, points, img, img_metas):
+    def extract_feat(self, points, img, plidar, img_metas):
         """Extract features from points."""
         ## Extract LiDAR Features
         voxels, num_points, coors = self.voxelize(points, self.voxel_layer)
@@ -77,97 +89,93 @@ class PVGNet2(SingleStage3DDetector):
             x = self.neck(x)
 
         bev_shape = x[0].shape[2:]
-        voxels, num_points, coors = self.voxelize(points, self.voxel_layer2)
-        voxel_features = self.voxel_encoder2(voxels, num_points, coors)
-        coors = coors.to(torch.long)
-        bev_feats = x[0][coors[:, 0], :, coors[:, 2], coors[:, 3]]
+        voxels, num_points_pts, coors_pts = self.voxelize(points, self.voxel_layer2)
+        voxel_features = self.voxel_encoder2(voxels, num_points_pts, coors_pts)
+        coors_pts = coors_pts.to(torch.long)
+        bev_feats = x[0][coors_pts[:, 0], :, coors_pts[:, 2], coors_pts[:, 3]]
 
-        anchor_points = coors[:, [0, 2, 3]].to(torch.float32)
-        x_range = self.point_cloud_range[3] - self.point_cloud_range[0]
-        y_range = self.point_cloud_range[4] - self.point_cloud_range[1]
-        anchor_size = self.bbox_head.anchor_cfg.size
-        anchor_points[:, 1] = (anchor_points[:, 1] + 0.5)\
-                              * y_range / bev_shape[0] + self.point_cloud_range[1]
-        anchor_points[:, 2] = (anchor_points[:, 2] + 0.5) * x_range / bev_shape[1]
-
-        z = torch.ones((anchor_points.shape[0], 1),
-                        dtype=torch.float32,
-                        device=coors.device) * (-1.7 + anchor_size[2] / 2)
-        anchor_points = torch.cat([anchor_points[:, [2]], anchor_points[:, [1]], z], dim=1)
-        pts_feats = [torch.cat([anchor_points, voxel_features, bev_feats], dim=1)]
+        pts_feats = torch.cat([voxel_features, bev_feats], dim=1)
+        pts_feats = self.channel_reduct(pts_feats)
 
         ## Extract RGB Features
         img_feats = self.img_backbone(img)
 
-        ## Fusion
-        # project anchor_points to image (x, y, z) -> (u, v)
-        pts_2d = []
-        for i in range(batch_size):
-            res_lidar2img = img_metas[i]['lidar2img']
-            img_shape = img_metas[i]['ori_shape'][:2]
-            res_pts2d = self.project_to_img(anchor_points, img_shape, res_lidar2img)
-            pts_2d.append(res_pts2d)
-        print('test')
+        ## Image features to bev
+        # resize plidar same as img feats
+        m = UpsamplingNearest2d(size=img_feats[0].shape[2:])
+        plidar = m(plidar)
 
+        img_feats_with_xyz = torch.cat([plidar, img_feats[0]], dim=1)
+        img_feats_with_xyz = img_feats_with_xyz.reshape(batch_size,
+            img_feats_with_xyz.shape[1], -1).permute([0, 2, 1]).contiguous()
+        img_feats = [feats.to(torch.float32) for feats in img_feats_with_xyz]
+        
+        voxels, num_points_img, coors_img = self.voxelize(img_feats, self.voxel_layer3)
+        voxel_features = self.voxel_encoder3(voxels, num_points_img, coors_img)
+        coors_img = coors_img.to(torch.long)
 
-        return fused_feats, anchor_points
+        ## fusion
+        device = plidar.device
+        bev_feats_pts = torch.zeros((batch_size, 256, *bev_shape), dtype=torch.float32, device=device)
+        bev_feats_img = torch.zeros((batch_size, 256, *bev_shape), dtype=torch.float32, device=device)
+        bev_feats_pts[coors_pts[:, 0], :, coors_pts[:, 2], coors_pts[:, 3]] = pts_feats
+        bev_feats_img[coors_img[:, 0], :, coors_img[:, 2], coors_img[:, 3]] = voxel_features
+
+        num_pts = torch.zeros((batch_size, 1, *bev_shape), dtype=torch.float32, device=device)
+        num_pts[coors_pts[:, 0], 0, coors_pts[:, 2], coors_pts[:, 3]] = num_points_pts.to(torch.float32)
+        num_img = torch.zeros((batch_size, 1, *bev_shape), dtype=torch.float32, device=device)
+        num_img[coors_img[:, 0], 0, coors_img[:, 2], coors_img[:, 3]] = num_points_img.to(torch.float32)
+        ## learnable weights
+        ## method1
+        # weights_pts = (self.weight_conv(num_pts)).sigmoid()
+        # weights_img = 1 - weights_pts
+        ## method2
+        weights_pts = (self.alpha * num_pts / (num_pts + num_img + self.beta)).sigmoid()
+        weights_img = 1 - weights_pts
+
+        fused_feats = bev_feats_pts * weights_pts + bev_feats_img * weights_img
+
+        # find valid coords
+        valid_idx = (num_pts + num_img).nonzero()[:, [0, 2, 3]]
+        fused_feats = fused_feats[valid_idx[:, 0], :, valid_idx[:, 1], valid_idx[:, 2]]
+
+        anchor_points = torch.zeros((batch_size, 3, *bev_shape), dtype=torch.float32, device=device)
+        anchor_points[:, 0, :, :] = torch.repeat_interleave(torch.tensor(range(bev_shape[1]),
+            dtype=torch.float32, device=device).reshape(1, -1), bev_shape[0], dim=0) + 0.5
+        anchor_points[:, 1, :, :] = torch.repeat_interleave(torch.tensor(range(bev_shape[0]),
+            dtype=torch.float32, device=device).reshape(-1, 1), bev_shape[1], dim=1) + 0.5
+
+        x_range = self.point_cloud_range[3] - self.point_cloud_range[0]
+        y_range = self.point_cloud_range[4] - self.point_cloud_range[1]
+        anchor_points[:, 0, :, :] = (anchor_points[:, 0, :, :]) * x_range / bev_shape[1]
+        anchor_points[:, 1, :, :] = (anchor_points[:, 1, :, :]) * y_range / bev_shape[0] + self.point_cloud_range[1]
+        anchor_points[:, 2, :, :] = -1.7 + 1.56 / 2
+        anchor_points = anchor_points[valid_idx[:, 0], :, valid_idx[:, 1], valid_idx[:, 2]]
+        anchor_points = torch.cat([valid_idx[:, 0].reshape(-1, 1), anchor_points], dim=1)
+        fused_feats = torch.cat([anchor_points[:, 1:], fused_feats], dim=1)
+
+        return [fused_feats], anchor_points
     
-    def project_to_img(self, points, img_shape, lidar2img):
-        device = points.device
-        proj_mat = torch.from_numpy(lidar2img[:3]).to(device)
-        points = points.transpose(1, 0)
-        num_pts = points.shape[1]
-        points = torch.cat((points, torch.ones((1, num_pts)).to(device)))
-        points = proj_mat @ points
-        points[:2, :] /= points[2, :]
-        pts_2d = points[:2, :]
-        pts_2d = pts_2d.permute(1, 0)
-        pts_2d = torch.floor(pts_2d).to(torch.long)
-
-        #filter points out of image
-        valid_idx = torch.where(
-            (pts_2d[:, 0] >= 0)&
-            (pts_2d[:, 0] < img_shape[1])&
-            (pts_2d[:, 1] >= 0)&
-            (pts_2d[:, 1] < img_shape[0])
-        )[0]
-        pts_2d[valid_idx]
-        return pts_2d
-
     def forward_train(self,
                       points,
                       img,
-                      pseudo_lidar,
+                      plidar,
                       img_metas,
                       gt_bboxes_3d,
                       gt_labels_3d,
                       gt_bboxes_ignore=None):
-        #test
-        import matplotlib.pyplot as plt
-        import open3d as o3d
-        from open3d import geometry
-        vis = o3d.visualization.Visualizer()
-        vis.create_window()
-        vis.set_full_screen(True)
-        vis.get_render_option().point_size = 0.01
-        plidar = pseudo_lidar[0].cpu().reshape(3, -1).T
-        valid_idx = torch.where(plidar[:, 0] != -1)[0]
-        plidar = plidar[valid_idx]
 
-
-
-
-        x, anchor_points = self.extract_feat(points, img, img_metas)
+        x, anchor_points = self.extract_feat(points, img, plidar, img_metas)
         outs = self.bbox_head(x)
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
         losses = self.bbox_head.loss(
             *loss_inputs, anchor_points, gt_bboxes_ignore=gt_bboxes_ignore)
         return losses
 
-    def simple_test(self, points, img_metas, imgs=None, rescale=False,
+    def simple_test(self, points, img_metas, imgs=None, plidar=None,rescale=False,
         gt_bboxes_3d=None, gt_labels_3d=None):
 
-        x, anchor_points = self.extract_feat(points, imgs, img_metas)
+        x, anchor_points = self.extract_feat(points, imgs, plidar[0], img_metas)
         outs = self.bbox_head(x)
         bbox_list = self.bbox_head.get_bboxes(
             anchor_points, *outs, img_metas, rescale=rescale,

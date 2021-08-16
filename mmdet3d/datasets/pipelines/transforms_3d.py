@@ -1214,7 +1214,7 @@ class DepthToLidarPoints(object):
         depth = np.array(depth)
         lidar_points = self.depth_to_lidar_points(
             depth[0], 0, P2, r_rect, velo2cam)
-        input_dict['pseudo_lidar'] = lidar_points
+        input_dict['plidar'] = lidar_points
         return input_dict
 
     def depth_to_points(self, depth, trunc_pixel):
@@ -1247,35 +1247,20 @@ class DepthToLidarPoints(object):
 
 @PIPELINES.register_module()
 class PsuedoPointsRangeFilter(object):
-    """Filter points by the range.
-
-    Args:
-        point_cloud_range (list[float]): Point cloud range.
-    """
-
     def __init__(self, point_cloud_range):
         self.pcd_range = np.array(point_cloud_range, dtype=np.float32)
 
     def __call__(self, input_dict):
-        """Call function to filter points by the range.
-
-        Args:
-            input_dict (dict): Result dict from loading pipeline.
-
-        Returns:
-            dict: Results after filtering, 'points' keys are updated \
-                in the result dict.
-        """
-        pseudo_lidar = input_dict['pseudo_lidar']
+        plidar = input_dict['plidar']
         ignore_mask = np.where(
-            (pseudo_lidar[:, 0] < self.pcd_range[0]) |
-            (pseudo_lidar[:, 1] < self.pcd_range[1]) |
-            (pseudo_lidar[:, 2] < self.pcd_range[2]) |
-            (pseudo_lidar[:, 0] > self.pcd_range[3]) |
-            (pseudo_lidar[:, 1] > self.pcd_range[4]) |
-            (pseudo_lidar[:, 2] > self.pcd_range[5])
+            (plidar[:, 0] < self.pcd_range[0]) |
+            (plidar[:, 1] < self.pcd_range[1]) |
+            (plidar[:, 2] < self.pcd_range[2]) |
+            (plidar[:, 0] > self.pcd_range[3]) |
+            (plidar[:, 1] > self.pcd_range[4]) |
+            (plidar[:, 2] > self.pcd_range[5])
         )[0]
-        pseudo_lidar[ignore_mask, :] = -1
+        plidar[ignore_mask, :] = -1
         return input_dict
 
 
@@ -1283,7 +1268,7 @@ class PsuedoPointsRangeFilter(object):
 class PseudoPointsFlip(object):
     def __call__(self, input_dict):
         if input_dict['pcd_horizontal_flip']:
-            input_dict['pseudo_lidar'][:, 1] *= -1
+            input_dict['plidar'][:, 1] *= -1
         return input_dict
 
 
@@ -1292,10 +1277,10 @@ class PseudoPointsRotScale(object):
     def __call__(self, input_dict):
         rotation = np.array(input_dict['pcd_rotation'])
         scale = input_dict['pcd_scale_factor']
-        pseudo_lidar = input_dict['pseudo_lidar']
-        pseudo_lidar = pseudo_lidar @ rotation
-        pseudo_lidar *= scale
-        input_dict['pseudo_lidar'] = pseudo_lidar
+        plidar = input_dict['plidar']
+        plidar = plidar @ rotation
+        plidar *= scale
+        input_dict['plidar'] = plidar
         return input_dict
 
 
@@ -1303,9 +1288,9 @@ class PseudoPointsRotScale(object):
 class PseudoPointsToImage(object):
     def __call__(self, input_dict):
         img_shape = input_dict['img_shape']
-        pseudo_lidar = input_dict['pseudo_lidar']
-        pseudo_lidar = pseudo_lidar.T.reshape(img_shape[2],
-                                              img_shape[0],
-                                              img_shape[1])
-        input_dict['pseudo_lidar'] = pseudo_lidar
+        plidar = input_dict['plidar']
+        plidar = plidar.T.reshape(img_shape[2],
+                                  img_shape[0],
+                                  img_shape[1])
+        input_dict['plidar'] = plidar
         return input_dict

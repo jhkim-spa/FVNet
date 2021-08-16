@@ -379,10 +379,7 @@ class PVGHead(nn.Module, AnchorTrainMixin):
         anchors_batch = []
         for i in range(batch_size):
             batch_mask = points[:, 0] == i
-            centers = points[batch_mask][:, [2, 1]]
-            z = torch.ones((centers.shape[0], 1), dtype=torch.float32,
-                device=device) * -1.7
-            centers = torch.cat([centers, z], dim=1)
+            centers = points[batch_mask][:, 1:]
 
             num_points = centers.shape[0]
             size = torch.tensor(anchor_cfg['size'], device=device).repeat((num_points, 1))

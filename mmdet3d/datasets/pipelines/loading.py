@@ -592,6 +592,7 @@ class LoadDepthFromFile(object):
             filename = results['img_info']['filename']
 
         filename = '/'.join(filename.split('/')[:3] + ['dense_depth'] + filename.split('/')[-1:])
+
         depth = Image.open(filename)
         tf_resize = transforms.Resize(size=self.size[::-1])
         tf_totensor = transforms.ToTensor()

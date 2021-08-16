@@ -36,12 +36,26 @@ model = dict(
         max_num_points=128,
         point_cloud_range=point_cloud_range,
         voxel_size=[0.32, 0.32, 4],
-        # max_voxels=(10000, 10000)),
-        max_voxels=(53568, 53568)),
+        max_voxels=(10000, 10000)),
+        # max_voxels=(53568, 53568)),
     voxel_encoder2=dict(
         type='HardVFE',
         in_channels=4,
         feat_channels=[64],
+        with_distance=False,
+        voxel_size=[0.32, 0.32, 4],
+        point_cloud_range=point_cloud_range),
+    # Image VFE
+    voxel_layer3=dict(
+        max_num_points=128,
+        point_cloud_range=point_cloud_range,
+        voxel_size=[0.32, 0.32, 4],
+        max_voxels=(10000, 10000)),
+        # max_voxels=(53568, 53568)),
+    voxel_encoder3=dict(
+        type='HardVFE',
+        in_channels=259,
+        feat_channels=[256],
         with_distance=False,
         voxel_size=[0.32, 0.32, 4],
         point_cloud_range=point_cloud_range),
@@ -52,8 +66,8 @@ model = dict(
         anchor_cfg =dict(size=[1.6, 3.9, 1.56],
                          rotation=[1.57]),
         num_classes=1,
-        in_channels=451,
-        feat_channels=451,
+        in_channels=259,
+        feat_channels=259,
         use_direction_classifier=True,
         diff_rad_by_sin=True,
         bbox_coder=dict(type='PVGNetBBoxCoder', normalize=False),
@@ -108,12 +122,12 @@ train_pipeline = [
     dict(type='DepthToLidarPoints'),
     # RGB pipeline
     dict(type='LoadImageFromFile', to_float32=True),
-    # dict(
-    #     type='PhotoMetricDistortion',
-    #     brightness_delta=32,
-    #     contrast_range=(0.5, 1.5),
-    #     saturation_range=(0.5, 1.5),
-    #     hue_delta=18),
+    dict(
+        type='PhotoMetricDistortion',
+        brightness_delta=32,
+        contrast_range=(0.5, 1.5),
+        saturation_range=(0.5, 1.5),
+        hue_delta=18),
     dict(type='Resize', img_scale=img_size, keep_ratio=False),
     dict(type='Normalize', **img_norm_cfg),
     # LiDAR pipeline
@@ -139,22 +153,23 @@ train_pipeline = [
     dict(type='PointShuffle'),
     dict(type='PseudoPointsToImage'),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
-    dict(type='Collect3D', keys=['points', 'img', 'pseudo_lidar', 
+    dict(type='Collect3D', keys=['points', 'img', 'plidar', 
                                  'gt_bboxes_3d', 'gt_labels_3d'])
 ]
 test_pipeline = [
+    dict(type='LoadDepthFromFile', size=img_size), #resize까지 한번에
+    dict(type='DepthToLidarPoints'),
     dict(type='LoadImageFromFile', to_float32=True),
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
     # dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
     dict(
         type='MultiScaleFlipAug3D',
-        img_scale=(1333, 800),
+        img_scale=(img_size),
         pts_scale_ratio=1,
         flip=False,
         transforms=[
-            dict(type='Resize', img_scale=img_size, keep_ratio=True),
+            dict(type='Resize', img_scale=img_size, keep_ratio=False),
             dict(type='Normalize', **img_norm_cfg),
-            dict(type='Pad', size_divisor=32),
             dict(
                 type='GlobalRotScaleTrans',
                 rot_range=[0, 0],
@@ -163,17 +178,19 @@ test_pipeline = [
             dict(type='RandomFlip3D'),
             dict(
                 type='PointsRangeFilter', point_cloud_range=point_cloud_range),
+            dict(type='PsuedoPointsRangeFilter', point_cloud_range=point_cloud_range),
+            dict(type='PseudoPointsToImage'),
             dict(
                 type='DefaultFormatBundle3D',
                 class_names=class_names,
                 with_label=False),
-            dict(type='Collect3D', keys=['points', 'img'])
+            dict(type='Collect3D', keys=['points', 'img', 'plidar'])
             # dict(type='Collect3D', keys=['points', 'gt_bboxes_3d', 'gt_labels_3d'])
         ])
 ]
 
 data = dict(
-    samples_per_gpu=6,
+    samples_per_gpu=4,
     workers_per_gpu=4,
     train=dict(
         type='RepeatDataset',
