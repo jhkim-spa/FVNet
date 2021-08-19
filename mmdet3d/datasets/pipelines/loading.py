@@ -575,10 +575,12 @@ class LoadAnnotations3D(LoadAnnotations):
 @PIPELINES.register_module()
 class LoadDepthFromFile(object):
     def __init__(self,
+                 src,
                  size,
                  file_client_args=dict(backend='disk')):
         self.file_client_args = file_client_args.copy()
         self.file_client = None
+        self.src = src
         self.size = size
 
     def __call__(self, results):
@@ -591,8 +593,11 @@ class LoadDepthFromFile(object):
         else:
             filename = results['img_info']['filename']
 
-        filename = '/'.join(filename.split('/')[:3] + ['dense_depth'] + filename.split('/')[-1:])
-
+        if self.src == 'prediction':
+            filename = '/'.join(filename.split('/')[:3] + ['dense_depth'] + filename.split('/')[-1:])
+        elif self.src == 'completion':
+            filename = '/'.join(filename.split('/')[:3] + ['depth_completion'] + filename.split('/')[-1:])
+            
         depth = Image.open(filename)
         tf_resize = transforms.Resize(size=self.size[::-1])
         tf_totensor = transforms.ToTensor()

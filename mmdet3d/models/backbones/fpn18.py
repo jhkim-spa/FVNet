@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from collections import OrderedDict
 
 from ..builder import BACKBONES
 
@@ -102,10 +103,15 @@ class FPN18(nn.Module):
                 self.layer4[1].conv2.out_channels]
         self.fpn = PyramidFeatures(fpn_sizes[0], fpn_sizes[1], fpn_sizes[2])
 
-        self.load_pretrained()
+    def _make_layer_det(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1]*(num_blocks-1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.f_in_planes_det, planes, stride))
+            self.f_in_planes_det = planes * block.expansion
+        return nn.Sequential(*layers)
 
-    def load_pretrained(self):
-        from collections import OrderedDict
+    def init_weights(self, pretrained=None):
         pth_path = 'pretrained/FPN18_retinanet_968.pth'
         pre_weights = torch.load(pth_path)
         new_res_state_dict = OrderedDict()
@@ -117,17 +123,6 @@ class FPN18(nn.Module):
                 new_res_state_dict[name] = v
         model_dict.update(new_res_state_dict) 
         self.load_state_dict(model_dict)
-
-    def _make_layer_det(self, block, planes, num_blocks, stride):
-        strides = [stride] + [1]*(num_blocks-1)
-        layers = []
-        for stride in strides:
-            layers.append(block(self.f_in_planes_det, planes, stride))
-            self.f_in_planes_det = planes * block.expansion
-        return nn.Sequential(*layers)
-
-    def init_weights(self, pretrained=None):
-        pass
 
     def forward(self, x):
         """Forward function."""

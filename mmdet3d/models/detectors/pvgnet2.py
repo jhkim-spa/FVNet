@@ -6,7 +6,7 @@ from torch.nn import functional as F
 from mmdet3d.core import bbox3d2result
 from mmdet3d.ops import Voxelization
 from mmdet.models import DETECTORS
-from mmdet3d.models.builder import build_voxel_encoder, build_middle_encoder, build_backbone
+from mmdet3d.models.builder import build_neck, build_voxel_encoder, build_middle_encoder, build_backbone
 from .single_stage import SingleStage3DDetector
 from torch.nn import UpsamplingNearest2d
 import torch.nn as nn
@@ -24,9 +24,8 @@ class PVGNet2(SingleStage3DDetector):
                  neck=None,
                  voxel_layer2=None,
                  voxel_encoder2=None,
-                 voxel_layer3=None,
-                 voxel_encoder3=None,
                  img_backbone=None,
+                 img_neck=None,
                  bbox_head=None,
                  train_cfg=None,
                  test_cfg=None,
@@ -47,16 +46,12 @@ class PVGNet2(SingleStage3DDetector):
 
         self.voxel_layer2 = Voxelization(**voxel_layer2)
         self.voxel_encoder2 = build_voxel_encoder(voxel_encoder2)
-        self.voxel_layer3 = Voxelization(**voxel_layer3)
-        self.voxel_encoder3 = build_voxel_encoder(voxel_encoder3)
 
-        self.img_backbone = build_backbone(img_backbone)
-
-        self.channel_reduct = nn.Linear(448, 256)
-        self.alpha = nn.Parameter(torch.randn(1))
-        self.beta = nn.Parameter(torch.randn(1))
-
-        # self.weight_conv = nn.Conv2d(1, 1, 1)
+        if img_backbone is not None:
+            self.img_backbone = build_backbone(img_backbone)
+        self.img_neck = None
+        if img_neck is not None:
+            self.img_neck = build_neck(img_neck)
 
     @torch.no_grad()
     @force_fp32()
@@ -76,10 +71,94 @@ class PVGNet2(SingleStage3DDetector):
             coors_batch.append(coor_pad)
         coors_batch = torch.cat(coors_batch, dim=0)
         return voxels, num_points, coors_batch
+    
+    @torch.no_grad()
+    def project_to_img(self, xyz, lidar2img):
 
-    def extract_feat(self, points, img, plidar, img_metas):
-        """Extract features from points."""
-        ## Extract LiDAR Features
+        device = xyz.device
+        lidar2img = lidar2img.to(device)
+        num_points = xyz.shape[0]
+        xyz_hom = torch.cat((xyz.T, torch.ones((1, num_points)).to(device)))
+        uv_hom = lidar2img @ xyz_hom
+        uv_hom[:2, :] /= uv_hom[2, :]
+        uv = uv_hom[:2, :].T
+        uv = uv[:, [1, 0]]
+
+        return uv
+
+    def fusion(self, lidar_feats, img_feats, img_metas, img):
+
+        device = lidar_feats.device
+        lidar2img = torch.from_numpy(img_metas['lidar2img'])[:3]
+        width = img_metas['img_shape'][1]
+        height = img_metas['img_shape'][0]
+        xyz = lidar_feats[:, :3].clone()
+
+        ## Back transformation for projection
+        ## scale -> rot -> flip
+        # scale
+        xyz = xyz / img_metas['pcd_scale_factor']
+        # rot
+        if img_metas.get('pcd_rotation') is not None:
+            rotation = img_metas['pcd_rotation'].to(device)
+            xyz = xyz @ torch.inverse(rotation)
+        # flip
+        if img_metas['pcd_horizontal_flip']:
+            xyz[:, 1] *= -1
+        uv = self.project_to_img(xyz, lidar2img)
+
+        ## scale uv with img resize scale factor
+        w_scale, h_scale = img_metas['scale_factor'][:2]
+        uv[:, 0] *= h_scale
+        uv[:, 1] *= w_scale
+
+        # flip uv if image flip is used
+        if img_metas['flip']:
+            uv[:, 1] = width - uv[:, 1] - 1
+
+        ### Visualize anchor centers
+        # import matplotlib.pyplot as plt
+        # img = torch.flip(img.cpu().permute([1, 2, 0]), [0])
+        # plt.imshow(img.cpu().permute([1, 2, 0]))
+        # plt.scatter(uv[:, 1].cpu().detach(),
+        #             height-uv[:, 0].cpu().detach(),
+        #             s=0.1,
+        #             color='red')
+        # plt.xlim(0, width)
+        # plt.ylim(0, height)
+        # plt.savefig('test.png', dpi=300)
+
+        ## fov filter
+        valid_inds = torch.where(
+            (uv[:, 0] < height) & (uv[:, 0] >= 0) &
+            (uv[:, 1] < width)  & (uv[:, 0] >= 0)
+        )[0]
+
+        ## scale uv with img feature scale factor
+        scale_factor = img_metas['img_shape'][0] / img_feats.shape[1]
+        uv /= scale_factor
+
+        uv = uv.to(torch.long)
+        uv = uv[valid_inds] 
+        lidar_feats = lidar_feats[valid_inds]
+
+        matched_img_feats = img_feats[:, uv[:, 0], uv[:, 1]].T
+        fused_feats = torch.cat([lidar_feats, matched_img_feats], dim=1)
+
+        return fused_feats
+
+    def extract_img_feats(self, img):
+
+        img_feats = self.img_backbone(img)
+        if self.img_neck is not None:
+            img_feats = self.img_neck(img_feats)
+
+        return img_feats
+    
+    def extract_lidar_feats(self, points):
+
+        device = points[0].device
+        # BEV feats
         voxels, num_points, coors = self.voxelize(points, self.voxel_layer)
         voxel_features = self.voxel_encoder(voxels, num_points, coors)
         batch_size = coors[-1, 0].item() + 1
@@ -87,104 +166,105 @@ class PVGNet2(SingleStage3DDetector):
         x = self.backbone(x)
         if self.with_neck:
             x = self.neck(x)
+        bev_feats = x[0]
 
-        bev_shape = x[0].shape[2:]
-        voxels, num_points_pts, coors_pts = self.voxelize(points, self.voxel_layer2)
-        voxel_features = self.voxel_encoder2(voxels, num_points_pts, coors_pts)
-        coors_pts = coors_pts.to(torch.long)
-        bev_feats = x[0][coors_pts[:, 0], :, coors_pts[:, 2], coors_pts[:, 3]]
+        # VFE
+        points_only_xyz = [res[:, :3].contiguous() for res in points]
+        voxels, num_points, coors = self.voxelize(points_only_xyz, self.voxel_layer2)
+        voxel_feats = self.voxel_encoder2(voxels, num_points, coors)
 
-        pts_feats = torch.cat([voxel_features, bev_feats], dim=1)
-        pts_feats = self.channel_reduct(pts_feats)
+        ## Get anchor centers
+        # method1. grid center
+        # x_range = self.point_cloud_range[3] - self.point_cloud_range[0]
+        # y_range = self.point_cloud_range[4] - self.point_cloud_range[1]
+        # bev_shape = bev_feats.shape[2:]
+        # anchor_size = self.bbox_head.anchor_cfg.size
+        # anchor_grid = coors[:, [2, 3]].to(torch.float32) + 0.5
+        # anchor_centers = torch.zeros((anchor_grid.shape[0], 3),
+        #                               dtype=torch.float32,
+        #                               device=device)
+        # anchor_centers[:, 0] = anchor_grid[:, 1] * x_range / bev_shape[1]
+        # anchor_centers[:, 1] = anchor_grid[:, 0] * y_range / bev_shape[0]\
+        #                         + self.point_cloud_range[1]
+        # lidar_height = 1.7
+        # anchor_centers[:, 2] = -lidar_height + anchor_size[2] / 2
+        # method2. voxel mean
+        anchor_centers = voxels.sum(dim=1) / num_points.reshape(-1, 1)
 
-        ## Extract RGB Features
-        img_feats = self.img_backbone(img)
+        # Concat features
+        coors = coors.to(torch.long)
+        bev_feats = bev_feats[coors[:, 0], :, coors[:, 2], coors[:, 3]]
+        lidar_feats = torch.cat([anchor_centers, bev_feats, voxel_feats], dim=1)
 
-        ## Image features to bev
-        # resize plidar same as img feats
-        m = UpsamplingNearest2d(size=img_feats[0].shape[2:])
-        plidar = m(plidar)
+        batch_size = len(points)
+        num_samples = [(coors[:, 0] == i).sum().item() for i in range(batch_size)]
+        lidar_feats = lidar_feats.split(num_samples)
 
-        img_feats_with_xyz = torch.cat([plidar, img_feats[0]], dim=1)
-        img_feats_with_xyz = img_feats_with_xyz.reshape(batch_size,
-            img_feats_with_xyz.shape[1], -1).permute([0, 2, 1]).contiguous()
-        img_feats = [feats.to(torch.float32) for feats in img_feats_with_xyz]
-        
-        voxels, num_points_img, coors_img = self.voxelize(img_feats, self.voxel_layer3)
-        voxel_features = self.voxel_encoder3(voxels, num_points_img, coors_img)
-        coors_img = coors_img.to(torch.long)
+        return lidar_feats
 
-        ## fusion
-        device = plidar.device
-        bev_feats_pts = torch.zeros((batch_size, 256, *bev_shape), dtype=torch.float32, device=device)
-        bev_feats_img = torch.zeros((batch_size, 256, *bev_shape), dtype=torch.float32, device=device)
-        bev_feats_pts[coors_pts[:, 0], :, coors_pts[:, 2], coors_pts[:, 3]] = pts_feats
-        bev_feats_img[coors_img[:, 0], :, coors_img[:, 2], coors_img[:, 3]] = voxel_features
+    def extract_feat(self, points, img_metas, img=None):
+        # TODO: Multi scale image features
 
-        num_pts = torch.zeros((batch_size, 1, *bev_shape), dtype=torch.float32, device=device)
-        num_pts[coors_pts[:, 0], 0, coors_pts[:, 2], coors_pts[:, 3]] = num_points_pts.to(torch.float32)
-        num_img = torch.zeros((batch_size, 1, *bev_shape), dtype=torch.float32, device=device)
-        num_img[coors_img[:, 0], 0, coors_img[:, 2], coors_img[:, 3]] = num_points_img.to(torch.float32)
-        ## learnable weights
-        ## method1
-        # weights_pts = (self.weight_conv(num_pts)).sigmoid()
-        # weights_img = 1 - weights_pts
-        ## method2
-        weights_pts = (self.alpha * num_pts / (num_pts + num_img + self.beta)).sigmoid()
-        weights_img = 1 - weights_pts
+        device = points[0].device
 
-        fused_feats = bev_feats_pts * weights_pts + bev_feats_img * weights_img
+        lidar_feats = self.extract_lidar_feats(points)
+        img_feats = self.extract_img_feats(img)[0]
 
-        # find valid coords
-        valid_idx = (num_pts + num_img).nonzero()[:, [0, 2, 3]]
-        fused_feats = fused_feats[valid_idx[:, 0], :, valid_idx[:, 1], valid_idx[:, 2]]
-
-        anchor_points = torch.zeros((batch_size, 3, *bev_shape), dtype=torch.float32, device=device)
-        anchor_points[:, 0, :, :] = torch.repeat_interleave(torch.tensor(range(bev_shape[1]),
-            dtype=torch.float32, device=device).reshape(1, -1), bev_shape[0], dim=0) + 0.5
-        anchor_points[:, 1, :, :] = torch.repeat_interleave(torch.tensor(range(bev_shape[0]),
-            dtype=torch.float32, device=device).reshape(-1, 1), bev_shape[1], dim=1) + 0.5
-
-        x_range = self.point_cloud_range[3] - self.point_cloud_range[0]
-        y_range = self.point_cloud_range[4] - self.point_cloud_range[1]
-        anchor_points[:, 0, :, :] = (anchor_points[:, 0, :, :]) * x_range / bev_shape[1]
-        anchor_points[:, 1, :, :] = (anchor_points[:, 1, :, :]) * y_range / bev_shape[0] + self.point_cloud_range[1]
-        anchor_points[:, 2, :, :] = -1.7 + 1.56 / 2
-        anchor_points = anchor_points[valid_idx[:, 0], :, valid_idx[:, 1], valid_idx[:, 2]]
-        anchor_points = torch.cat([valid_idx[:, 0].reshape(-1, 1), anchor_points], dim=1)
-        fused_feats = torch.cat([anchor_points[:, 1:], fused_feats], dim=1)
-
-        return [fused_feats], anchor_points
+        batch_size = len(points)
+        fused_feats_list = []
+        num_samples = []
+        for i in range(batch_size):
+            feats = self.fusion(lidar_feats[i], img_feats[i], img_metas[i], img[i])
+            fused_feats_list.append(feats)
+            num_samples.append(feats.shape[0])
+        fused_feats = torch.cat(fused_feats_list)
+        batch_idx = [[i] * num for i, num in enumerate(num_samples)]
+        batch_idx = torch.cat([torch.tensor(l) for l in batch_idx]).reshape(-1, 1)
+        batch_idx = batch_idx.to(device)
+        anchor_centers = fused_feats[:, :3].clone()
+        anchor_centers = torch.cat([batch_idx, anchor_centers], dim=1)
+        return [fused_feats], anchor_centers
     
     def forward_train(self,
                       points,
-                      img,
-                      plidar,
                       img_metas,
-                      gt_bboxes_3d,
-                      gt_labels_3d,
+                      img=None,
+                      gt_bboxes_3d=None,
+                      gt_labels_3d=None,
                       gt_bboxes_ignore=None):
 
-        x, anchor_points = self.extract_feat(points, img, plidar, img_metas)
+        x, anchor_centers = self.extract_feat(points, img_metas, img)
         outs = self.bbox_head(x)
         loss_inputs = outs + (gt_bboxes_3d, gt_labels_3d, img_metas)
         losses = self.bbox_head.loss(
-            *loss_inputs, anchor_points, gt_bboxes_ignore=gt_bboxes_ignore)
+            *loss_inputs, anchor_centers, gt_bboxes_ignore=gt_bboxes_ignore)
+
         return losses
 
-    def simple_test(self, points, img_metas, imgs=None, plidar=None,rescale=False,
-        gt_bboxes_3d=None, gt_labels_3d=None):
+    def simple_test(self,
+                    points,
+                    img_metas,
+                    imgs=None,
+                    rescale=False,
+                    gt_bboxes_3d=None,
+                    gt_labels_3d=None):
 
-        x, anchor_points = self.extract_feat(points, imgs, plidar[0], img_metas)
+        x, anchor_centers = self.extract_feat(points, img_metas, imgs)
         outs = self.bbox_head(x)
         bbox_list = self.bbox_head.get_bboxes(
-            anchor_points, *outs, img_metas, rescale=rescale,
+            anchor_centers, *outs, img_metas, rescale=rescale,
             gt_bboxes_3d=gt_bboxes_3d, gt_labels_3d=gt_labels_3d)
         bbox_results = [
             bbox3d2result(bboxes, scores, labels)
             for bboxes, scores, labels in bbox_list
         ]
+
         return bbox_results
 
-    def aug_test(self, points, img_metas, imgs=None, rescale=False):
+    def aug_test(self,
+                 points,
+                 img_metas,
+                 imgs=None,
+                 rescale=False):
+
         assert True, "Not implemented"

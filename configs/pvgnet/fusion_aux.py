@@ -33,29 +33,14 @@ model = dict(
         out_channels=[128, 128, 128]),
     # VFE
     voxel_layer2=dict(
-        max_num_points=128,
+        max_num_points=32,
         point_cloud_range=point_cloud_range,
         voxel_size=[0.32, 0.32, 4],
         max_voxels=(10000, 10000)),
-        # max_voxels=(53568, 53568)),
     voxel_encoder2=dict(
         type='HardVFE',
-        in_channels=4,
-        feat_channels=[64],
-        with_distance=False,
-        voxel_size=[0.32, 0.32, 4],
-        point_cloud_range=point_cloud_range),
-    # Image VFE
-    voxel_layer3=dict(
-        max_num_points=128,
-        point_cloud_range=point_cloud_range,
-        voxel_size=[0.32, 0.32, 4],
-        max_voxels=(10000, 10000)),
-        # max_voxels=(53568, 53568)),
-    voxel_encoder3=dict(
-        type='HardVFE',
-        in_channels=259,
-        feat_channels=[256],
+        in_channels=3,
+        feat_channels=[128],
         with_distance=False,
         voxel_size=[0.32, 0.32, 4],
         point_cloud_range=point_cloud_range),
@@ -66,8 +51,8 @@ model = dict(
         anchor_cfg =dict(size=[1.6, 3.9, 1.56],
                          rotation=[1.57]),
         num_classes=1,
-        in_channels=259,
-        feat_channels=259,
+        in_channels=771,
+        feat_channels=771,
         use_direction_classifier=True,
         diff_rad_by_sin=True,
         bbox_coder=dict(type='PVGNetBBoxCoder', normalize=False),
@@ -117,9 +102,6 @@ img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
 
 train_pipeline = [
-    # Depth pipeline
-    dict(type='LoadDepthFromFile', size=img_size), #resize까지 한번에
-    dict(type='DepthToLidarPoints'),
     # RGB pipeline
     dict(type='LoadImageFromFile', to_float32=True),
     dict(
@@ -141,27 +123,19 @@ train_pipeline = [
     #     global_rot_range=[0.0, 0.0],
     #     rot_range=[-0.15707963267, 0.15707963267]),
     dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
-    dict(type='PseudoPointsFlip'),
     dict(
         type='GlobalRotScaleTrans',
         rot_range=[-0.78539816, 0.78539816],
         scale_ratio_range=[0.95, 1.05]),
-    dict(type='PseudoPointsRotScale'),
     dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
-    dict(type='PsuedoPointsRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='ObjectRangeFilter', point_cloud_range=point_cloud_range),
     dict(type='PointShuffle'),
-    dict(type='PseudoPointsToImage'),
     dict(type='DefaultFormatBundle3D', class_names=class_names),
-    dict(type='Collect3D', keys=['points', 'img', 'plidar', 
-                                 'gt_bboxes_3d', 'gt_labels_3d'])
+    dict(type='Collect3D', keys=['points', 'img', 'gt_bboxes_3d', 'gt_labels_3d'])
 ]
 test_pipeline = [
-    dict(type='LoadDepthFromFile', size=img_size), #resize까지 한번에
-    dict(type='DepthToLidarPoints'),
     dict(type='LoadImageFromFile', to_float32=True),
     dict(type='LoadPointsFromFile', coord_type='LIDAR', load_dim=4, use_dim=4),
-    # dict(type='LoadAnnotations3D', with_bbox_3d=True, with_label_3d=True),
     dict(
         type='MultiScaleFlipAug3D',
         img_scale=(img_size),
@@ -176,21 +150,14 @@ test_pipeline = [
                 scale_ratio_range=[1., 1.],
                 translation_std=[0, 0, 0]),
             dict(type='RandomFlip3D'),
-            dict(
-                type='PointsRangeFilter', point_cloud_range=point_cloud_range),
-            dict(type='PsuedoPointsRangeFilter', point_cloud_range=point_cloud_range),
-            dict(type='PseudoPointsToImage'),
-            dict(
-                type='DefaultFormatBundle3D',
-                class_names=class_names,
-                with_label=False),
-            dict(type='Collect3D', keys=['points', 'img', 'plidar'])
-            # dict(type='Collect3D', keys=['points', 'gt_bboxes_3d', 'gt_labels_3d'])
+            dict(type='PointsRangeFilter', point_cloud_range=point_cloud_range),
+            dict(type='DefaultFormatBundle3D', class_names=class_names, with_label=False),
+            dict(type='Collect3D', keys=['points', 'img'])
         ])
 ]
 
 data = dict(
-    samples_per_gpu=4,
+    samples_per_gpu=6,
     workers_per_gpu=4,
     train=dict(
         type='RepeatDataset',

@@ -31,7 +31,6 @@ class PVGHead(nn.Module, AnchorTrainMixin):
                  dir_limit_offset=1,
                  bbox_coder=dict(type='DeltaXYZWLHRBBoxCoder'),
                  fg_weight=1,
-                 seperate_layer=False,
                  loss_cls=dict(
                      type='CrossEntropyLoss',
                      use_sigmoid=True,
@@ -58,7 +57,6 @@ class PVGHead(nn.Module, AnchorTrainMixin):
         self.box_code_size = self.bbox_coder.code_size
 
         # build loss function
-        self.seperate_layer = seperate_layer
         self.use_sigmoid_cls = loss_cls.get('use_sigmoid', False)
         self.sampling = loss_cls['type'] not in ['FocalLoss', 'GHMC']
         if not self.use_sigmoid_cls:
@@ -92,44 +90,24 @@ class PVGHead(nn.Module, AnchorTrainMixin):
 
     def _init_layers(self):
         """Initialize neural network layers of the head."""
-        if self.seperate_layer:
-            self.lidar_layer = nn.Sequential(
-                nn.Linear(387, 128),
-                nn.BatchNorm1d(128),
-                nn.ReLU(inplace=True)
-            )
-            self.camera_layer = nn.Sequential(
-                nn.Linear(256, 128),
-                nn.BatchNorm1d(128),
-                nn.ReLU(inplace=True)
-            )
-            self.shared_layer = nn.Sequential(
-                nn.Linear(128, 128),
-                nn.BatchNorm1d(128),
-                nn.ReLU(inplace=True),
-                nn.Linear(128, 64),
-                nn.BatchNorm1d(64),
-                nn.ReLU(inplace=True)
-            )
-        else:
-            self.shared_layer = nn.Sequential(
-                nn.Linear(self.in_channels, 128),
-                nn.BatchNorm1d(128),
-                nn.ReLU(inplace=True),
-                nn.Linear(128, 128),
-                nn.BatchNorm1d(128),
-                nn.ReLU(inplace=True),
-                nn.Linear(128, 64),
-                nn.BatchNorm1d(64),
-                nn.ReLU(inplace=True)
-            )
+        self.shared_layer = nn.Sequential(
+            nn.Linear(self.in_channels, 512),
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
+            nn.Linear(512, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True)
+        )
         # Classification layer
-        self.cls_layer = nn.Linear(64, self.num_classes)
+        self.cls_layer = nn.Linear(128, self.num_classes)
         # Regression layer
-        self.reg_layer = nn.Linear(64, self.box_code_size)
+        self.reg_layer = nn.Linear(128, self.box_code_size)
 
         if self.use_direction_classifier:
-            self.dir_cls_layer = nn.Linear(64, self.num_classes * 2, 1)
+            self.dir_cls_layer = nn.Linear(128, self.num_classes * 2, 1)
 
     def init_weights(self):
         """Initialize the weights of head."""
@@ -143,13 +121,7 @@ class PVGHead(nn.Module, AnchorTrainMixin):
             tuple[torch.Tensor]: Contain score of each class, bbox \
                 regression and direction classification predictions.
         """
-        if self.seperate_layer:
-            lidar_feats = self.lidar_layer(x[:, :387])
-            camera_feats = self.camera_layer(x[:, 387:])
-            x = lidar_feats + camera_feats
-            x = self.shared_layer(x)
-        else:
-            x = self.shared_layer(x)
+        x = self.shared_layer(x)
         cls_score = self.cls_layer(x)
         bbox_pred = self.reg_layer(x)
         dir_cls_preds = None
@@ -199,7 +171,7 @@ class PVGHead(nn.Module, AnchorTrainMixin):
              gt_bboxes,
              gt_labels,
              input_metas,
-             anchor_points,
+             anchor_centers,
              gt_bboxes_ignore=None):
         """Calculate losses.
         Args:
@@ -222,7 +194,7 @@ class PVGHead(nn.Module, AnchorTrainMixin):
                     losses.
         """
         device = cls_scores[0].device
-        anchor_list = self.get_anchors(anchor_points, self.anchor_cfg, device=device)
+        anchor_list = self.get_anchors(anchor_centers, self.anchor_cfg, device=device)
         label_channels = self.num_classes if self.use_sigmoid_cls else 1
         cls_reg_targets = self.get_targets(
             anchor_list,
@@ -380,6 +352,7 @@ class PVGHead(nn.Module, AnchorTrainMixin):
         for i in range(batch_size):
             batch_mask = points[:, 0] == i
             centers = points[batch_mask][:, 1:]
+            centers[:, 2] -= anchor_cfg['size'][2] / 2
 
             num_points = centers.shape[0]
             size = torch.tensor(anchor_cfg['size'], device=device).repeat((num_points, 1))

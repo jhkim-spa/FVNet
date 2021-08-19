@@ -4,7 +4,6 @@ from mmcv.cnn import bias_init_with_prob, normal_init
 from mmcv.runner import force_fp32
 from torch import nn as nn
 import torch.nn.functional as F
-from torch.nn.modules.batchnorm import BatchNorm2d
 
 from mmdet3d.core import (PseudoSampler, anchor, box3d_multiclass_nms, limit_period,
                           xywhr2xyxyr)
@@ -15,12 +14,12 @@ from ..builder import build_loss
 
 
 @HEADS.register_module()
-class PVGHeadAux(nn.Module):
+class PVGAuxHead(nn.Module):
 
     def __init__(self,
                  num_classes,
                  in_channels,
-                 bbox_coder=dict(type='DeltaXYWHBBoxCoder'),
+                 bbox_coder=dict(type='PVGNetBBoxCoder'),
                  loss_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,
@@ -34,7 +33,7 @@ class PVGHeadAux(nn.Module):
         self.num_classes = num_classes
         self.fp16_enabled = False
 
-        self.cls_out_channels = 1
+        # build box coder
         self.bbox_coder = build_bbox_coder(bbox_coder)
         self.box_code_size = 2
 
@@ -55,30 +54,41 @@ class PVGHeadAux(nn.Module):
 
     def _init_layers(self):
         """Initialize neural network layers of the head."""
-        self.shared_layer = nn.Sequential(
-            nn.Conv2d(self.in_channels, 128, 3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, 3, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 64, 3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True)
-        )
-        self.cls_layer = nn.Conv2d(64, self.cls_out_channels, 1)
-        self.reg_layer = nn.Conv2d(64, self.box_code_size, 1)
+        self.conv_sahred = None
+        # self.cls_out_channels = self.num_classes
+        # self.conv_shared = nn.Sequential(
+        #     nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(self.in_channels),
+        #     nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(self.in_channels),
+        #     nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+        #     nn.ReLU(inplace=True),
+        #     nn.BatchNorm2d(self.in_channels)
+        # )
+        # self.conv_shared = nn.Sequential(
+        #     nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+        #     nn.BatchNorm2d(self.in_channels),
+        #     nn.ReLU(inplace=True),
+        #     nn.Conv2d(self.in_channels, self.in_channels, 3, padding=1),
+        #     nn.BatchNorm2d(self.in_channels),
+        #     nn.ReLU(inplace=True),
+        # )
+        self.conv_cls = nn.Conv2d(self.in_channels, self.cls_out_channels, 1)
+        self.conv_reg = nn.Conv2d(self.in_channels, self.box_code_size, 1)
 
     def init_weights(self):
         """Initialize the weights of head."""
         bias_cls = bias_init_with_prob(0.01)
-        normal_init(self.cls_layer, std=0.01, bias=bias_cls)
-        normal_init(self.reg_layer, std=0.01)
+        normal_init(self.conv_cls, std=0.01, bias=bias_cls)
+        normal_init(self.conv_reg, std=0.01)
 
     def forward_single(self, x):
-        x = self.shared_layer(x)
-        cls_score = self.cls_layer(x)
-        bbox_pred = self.reg_layer(x)
+        if self.conv_shared is not None:
+            x = self.conv_shared(x)
+        cls_score = self.conv_cls(x)
+        bbox_pred = self.conv_reg(x)
         return cls_score, bbox_pred
 
     def forward(self, feats):
