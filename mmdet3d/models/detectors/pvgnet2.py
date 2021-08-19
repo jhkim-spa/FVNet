@@ -86,7 +86,7 @@ class PVGNet2(SingleStage3DDetector):
 
         return uv
 
-    def fusion(self, lidar_feats, img_feats, img_metas, img):
+    def fusion(self, lidar_feats, img_feats, img_metas):
 
         device = lidar_feats.device
         lidar2img = torch.from_numpy(img_metas['lidar2img'])[:3]
@@ -147,6 +147,70 @@ class PVGNet2(SingleStage3DDetector):
 
         return fused_feats
 
+    def fusion_mlvl(self, lidar_feats, img_feats, img_metas):
+
+        device = lidar_feats.device
+        lidar2img = torch.from_numpy(img_metas['lidar2img'])[:3]
+        width = img_metas['img_shape'][1]
+        height = img_metas['img_shape'][0]
+        xyz = lidar_feats[:, :3].clone()
+
+        ## Back transformation for projection
+        ## scale -> rot -> flip
+        # scale
+        xyz = xyz / img_metas['pcd_scale_factor']
+        # rot
+        if img_metas.get('pcd_rotation') is not None:
+            rotation = img_metas['pcd_rotation'].to(device)
+            xyz = xyz @ torch.inverse(rotation)
+        # flip
+        if img_metas['pcd_horizontal_flip']:
+            xyz[:, 1] *= -1
+        uv = self.project_to_img(xyz, lidar2img)
+
+        ## scale uv with img resize scale factor
+        w_scale, h_scale = img_metas['scale_factor'][:2]
+        uv[:, 0] *= h_scale
+        uv[:, 1] *= w_scale
+
+        # flip uv if image flip is used
+        if img_metas['flip']:
+            uv[:, 1] = width - uv[:, 1] - 1
+
+        ### Visualize anchor centers
+        # import matplotlib.pyplot as plt
+        # img = torch.flip(img.cpu().permute([1, 2, 0]), [0])
+        # plt.imshow(img.cpu().permute([1, 2, 0]))
+        # plt.scatter(uv[:, 1].cpu().detach(),
+        #             height-uv[:, 0].cpu().detach(),
+        #             s=0.1,
+        #             color='red')
+        # plt.xlim(0, width)
+        # plt.ylim(0, height)
+        # plt.savefig('test.png', dpi=300)
+
+        ## fov filter
+        valid_inds = torch.where(
+            (uv[:, 0] < height) & (uv[:, 0] >= 0) &
+            (uv[:, 1] < width)  & (uv[:, 0] >= 0)
+        )[0]
+        uv = uv[valid_inds]
+        lidar_feats = lidar_feats[valid_inds]
+
+        ## scale uv with img feature scale factor
+        num_scales = len(img_feats)
+        matched_img_feats = []
+        for i in range(num_scales):
+            scale_factor = img_metas['img_shape'][0] / img_feats[i].shape[1]
+            res_uv = uv / scale_factor
+            res_uv = res_uv.to(torch.long)
+
+            res_matched_img_feats = img_feats[i][:, res_uv[:, 0], res_uv[:, 1]].T
+            matched_img_feats.append(res_matched_img_feats)
+        fused_feats = torch.cat([lidar_feats, sum(matched_img_feats)], dim=1)
+
+        return fused_feats
+
     def extract_img_feats(self, img):
 
         img_feats = self.img_backbone(img)
@@ -204,19 +268,31 @@ class PVGNet2(SingleStage3DDetector):
 
     def extract_feat(self, points, img_metas, img=None):
         # TODO: Multi scale image features
+        use_mlvl = True
 
         device = points[0].device
 
         lidar_feats = self.extract_lidar_feats(points)
-        img_feats = self.extract_img_feats(img)[0]
+        if use_mlvl:
+            img_feats = self.extract_img_feats(img)
+            batch_size = len(points)
+            fused_feats_list = []
+            num_samples = []
+            for i in range(batch_size):
+                img_feats_batch = [feats[i] for feats in img_feats]
+                feats = self.fusion_mlvl(lidar_feats[i], img_feats_batch, img_metas[i])
+                fused_feats_list.append(feats)
+                num_samples.append(feats.shape[0])
+        else:
+            img_feats = self.extract_img_feats(img)[0]
+            batch_size = len(points)
+            fused_feats_list = []
+            num_samples = []
+            for i in range(batch_size):
+                feats = self.fusion(lidar_feats[i], img_feats[i], img_metas[i])
+                fused_feats_list.append(feats)
+                num_samples.append(feats.shape[0])
 
-        batch_size = len(points)
-        fused_feats_list = []
-        num_samples = []
-        for i in range(batch_size):
-            feats = self.fusion(lidar_feats[i], img_feats[i], img_metas[i], img[i])
-            fused_feats_list.append(feats)
-            num_samples.append(feats.shape[0])
         fused_feats = torch.cat(fused_feats_list)
         batch_idx = [[i] * num for i, num in enumerate(num_samples)]
         batch_idx = torch.cat([torch.tensor(l) for l in batch_idx]).reshape(-1, 1)
