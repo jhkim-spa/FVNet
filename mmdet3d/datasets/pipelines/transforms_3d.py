@@ -679,6 +679,9 @@ class BackgroundPointsFilter(object):
         points = input_dict['points']
         gt_bboxes_3d = input_dict['gt_bboxes_3d']
 
+        if gt_bboxes_3d.tensor.shape[0] == 0:
+            return input_dict
+
         gt_bboxes_3d_np = gt_bboxes_3d.tensor.numpy()
         gt_bboxes_3d_np[:, :3] = gt_bboxes_3d.gravity_center.numpy()
         enlarged_gt_bboxes_3d = gt_bboxes_3d_np.copy()
