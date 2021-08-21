@@ -4,7 +4,7 @@
 point_cloud_range = [0, -39.68, -3, 69.12, 39.68, 1]
 voxel_size = [0.16, 0.16, 4]
 model = dict(
-    type='PVGNet2',
+    type='PVGNet',
     bev_interp=True,
     voxel_layer=dict(
         max_num_points=32,
@@ -65,7 +65,20 @@ model = dict(
             loss_weight=1.0),
         loss_bbox=dict(type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=2.0),
         loss_dir=dict(
-            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)))
+            type='CrossEntropyLoss', use_sigmoid=False, loss_weight=0.2)),
+
+    # Aux task: fg segmnetation, depth estimation with img features
+    aux_head=dict(
+        type='PVGAuxHead',
+        in_channels=256,
+        loss_seg=dict(
+            type='FocalLoss',
+            use_sigmoid=True,
+            gamma=2.0,
+            alpha=0.25,
+            loss_weight=0.1),
+        loss_depth=dict(
+            type='SmoothL1Loss', beta=1.0 / 9.0, loss_weight=0.1)))
 # model training and testing settings
 train_cfg = dict(
     assigner=dict(type='InBoxAssigner'),
@@ -122,7 +135,7 @@ train_pipeline = [
     #     translation_std=[0.25, 0.25, 0.25],
     #     global_rot_range=[0.0, 0.0],
     #     rot_range=[-0.15707963267, 0.15707963267]),
-    dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5),
+    dict(type='RandomFlip3D', flip_ratio_bev_horizontal=0.5, sync_2d=False),
     dict(
         type='GlobalRotScaleTrans',
         rot_range=[-0.78539816, 0.78539816],

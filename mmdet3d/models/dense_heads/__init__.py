@@ -9,13 +9,12 @@ from .vote_head import VoteHead
 from .fvnet_head import FVNetHead
 from .fvnet_anchor_head import FVNetAnchorHead
 from .fvnet_aux_head import FVNetAuxHead
-from .pvgnet_head import PVGAnchorHead
-from .pvgnet_head2 import PVGHead
+from .pvgnet_head import PVGHead
 from .pvg_aux_head import PVGAuxHead
 
 __all__ = [
     'Anchor3DHead', 'FreeAnchor3DHead', 'PartA2RPNHead', 'VoteHead',
     'SSD3DHead', 'BaseConvBboxHead', 'CenterHead', 'ShapeAwareHead',
-    'FVNetHead', 'FVNetAnchorHead', 'FVNetAuxHead',
-    'PVGAnchorHead', 'PVGHead', 'PVGAuxHead'
+    'FVNetHead', 'FVNetAnchorHead',
+    'PVGHead', 'PVGAuxHead'
 ]

@@ -14,15 +14,12 @@ class InBoxAssigner(BaseAssigner):
 
         # to remove road points
         d = 0.1
-        gt_bboxes_big = gt_bboxes.clone()
-        gt_bboxes_small = gt_bboxes.clone()
-        gt_bboxes_small[:, 5] -= d
-        gt_bboxes_small[:, 2] += d
+        gt_bboxes = gt_bboxes.clone()
 
         points = anchors[:, :3].clone()
         points[:, 2] += anchors[:, 5] / 2
         num_points = points.shape[0]
-        num_gts = gt_bboxes_big.shape[0]
+        num_gts = gt_bboxes.shape[0]
 
         if num_gts == 0 or num_points == 0:
             # If no truth assign everything to the background
@@ -38,9 +35,9 @@ class InBoxAssigner(BaseAssigner):
             return AssignResult(
                 num_gts, assigned_gt_inds, None, labels=assigned_labels)
 
-        gt_bboxes_big = gt_bboxes_big.unsqueeze(dim=0)
+        gt_bboxes = gt_bboxes.unsqueeze(dim=0)
         points = points.unsqueeze(dim=0)
-        assigned_gt_inds = points_in_boxes_gpu(points, gt_bboxes_big).to(torch.long).squeeze(dim=0)
+        assigned_gt_inds = points_in_boxes_gpu(points, gt_bboxes).to(torch.long).squeeze(dim=0)
 
         assigned_gt_inds = assigned_gt_inds + 1
 
