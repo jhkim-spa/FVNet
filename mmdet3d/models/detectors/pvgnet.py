@@ -46,8 +46,9 @@ class PVGNet(SingleStage3DDetector):
         self.voxel_encoder = build_voxel_encoder(voxel_encoder)
         self.middle_encoder = build_middle_encoder(middle_encoder)
 
-        self.voxel_layer2 = Voxelization(**voxel_layer2)
-        self.voxel_encoder2 = build_voxel_encoder(voxel_encoder2)
+        if voxel_layer2 is not None:
+            self.voxel_layer2 = Voxelization(**voxel_layer2)
+            self.voxel_encoder2 = build_voxel_encoder(voxel_encoder2)
 
         if img_backbone is not None:
             self.img_backbone = build_backbone(img_backbone)
@@ -55,6 +56,7 @@ class PVGNet(SingleStage3DDetector):
         if img_neck is not None:
             self.img_neck = build_neck(img_neck)
         
+        self.aux_head = None
         if aux_head is not None:
             self.aux_head = build_head(aux_head)
 
@@ -269,7 +271,7 @@ class PVGNet(SingleStage3DDetector):
         num_samples = [(coors[:, 0] == i).sum().item() for i in range(batch_size)]
         lidar_feats = lidar_feats.split(num_samples)
 
-        return lidar_feats
+        return lidar_feats, coors
 
     def extract_feat(self, points, img_metas, img=None):
         # TODO: Multi scale image features
@@ -277,12 +279,13 @@ class PVGNet(SingleStage3DDetector):
 
         device = points[0].device
 
-        lidar_feats = self.extract_lidar_feats(points)
+        lidar_feats, coors = self.extract_lidar_feats(points)
 
         if img is None:
             img_feats = None
-            """
-            """
+            lidar_feats = torch.cat(lidar_feats, dim=0)
+            anchor_centers = lidar_feats[:, :3].clone()
+            anchor_centers = torch.cat([coors[:, :1], anchor_centers], dim=1)
             return [lidar_feats], anchor_centers, img_feats
 
         if use_mlvl:

@@ -165,7 +165,7 @@ class PVGNetN(SingleStage3DDetector):
 
     #     return fused_feats
 
-    def fusion_mlvl(self, lidar_feats, img_feats, img_metas):
+    def fusion_mlvl(self, lidar_feats, img_feats, img_metas, num_points):
 
         device = lidar_feats.device
         lidar2img = torch.from_numpy(img_metas['lidar2img'])[:3]
@@ -227,9 +227,11 @@ class PVGNetN(SingleStage3DDetector):
             matched_img_feats.append(res_matched_img_feats)
         matched_img_feats = torch.cat(matched_img_feats, dim=1)
         matched_img_feats = self.channel_reduct_layer(matched_img_feats)
-        matched_img_feats_with_num = 
+        num_points = num_points[valid_inds].unsqueeze(dim=-1)
+        matched_img_feats_with_num = torch.cat([num_points, matched_img_feats], dim=1)
         weights = self.weight_layer(matched_img_feats_with_num)
-        fused_feats = torch.cat([lidar_feats, sum(matched_img_feats)], dim=1)
+        matched_img_feats = weights * matched_img_feats
+        fused_feats = torch.cat([lidar_feats, matched_img_feats], dim=1)
 
         return fused_feats
 
@@ -242,8 +244,6 @@ class PVGNetN(SingleStage3DDetector):
         return img_feats
     
     def extract_lidar_feats(self, points):
-
-        device = points[0].device
         # BEV feats
         voxels, num_points, coors = self.voxelize(points, self.voxel_layer)
         voxel_features = self.voxel_encoder(voxels, num_points, coors)
@@ -285,6 +285,7 @@ class PVGNetN(SingleStage3DDetector):
         batch_size = len(points)
         num_samples = [(coors[:, 0] == i).sum().item() for i in range(batch_size)]
         lidar_feats = lidar_feats.split(num_samples)
+        num_points = num_points.split(num_samples)
 
         return lidar_feats, num_points
 
@@ -309,7 +310,7 @@ class PVGNetN(SingleStage3DDetector):
             num_samples = []
             for i in range(batch_size):
                 img_feats_batch = [feats[i] for feats in img_feats]
-                feats = self.fusion_mlvl(lidar_feats[i], img_feats_batch, img_metas[i])
+                feats = self.fusion_mlvl(lidar_feats[i], img_feats_batch, img_metas[i], num_points[i])
                 fused_feats_list.append(feats)
                 num_samples.append(feats.shape[0])
         else:

@@ -1,13 +1,14 @@
 ##############################################################################################
 ########################################## Model #############################################
 ##############################################################################################
+point_cloud_range = [0, -39.68, -3, 69.12, 39.68, 1]
 voxel_size = [0.16, 0.16, 4]
 model = dict(
     type='PVGNet',
     bev_interp=True,
     voxel_layer=dict(
         max_num_points=32,
-        point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1],
+        point_cloud_range=point_cloud_range,
         voxel_size=voxel_size,
         max_voxels=(16000, 40000)),
     voxel_encoder=dict(
@@ -16,7 +17,7 @@ model = dict(
         feat_channels=[64],
         with_distance=False,
         voxel_size=voxel_size,
-        point_cloud_range=[0, -39.68, -3, 69.12, 39.68, 1]),
+        point_cloud_range=point_cloud_range),
     middle_encoder=dict(
         type='PointPillarsScatter', in_channels=64, output_shape=[496, 432]),
     backbone=dict(
@@ -30,13 +31,26 @@ model = dict(
         in_channels=[64, 128, 256],
         upsample_strides=[1, 2, 4],
         out_channels=[128, 128, 128]),
+    # VFE
+    voxel_layer2=dict(
+        max_num_points=32,
+        point_cloud_range=point_cloud_range,
+        voxel_size=[0.32, 0.32, 4],
+        max_voxels=(10000, 10000)),
+    voxel_encoder2=dict(
+        type='HardVFE',
+        in_channels=3,
+        feat_channels=[128],
+        with_distance=False,
+        voxel_size=[0.32, 0.32, 4],
+        point_cloud_range=point_cloud_range),
     bbox_head=dict(
         type='PVGHead',
         anchor_cfg =dict(size=[1.6, 3.9, 1.56],
                          rotation=[1.57]),
         num_classes=1,
-        in_channels=451,
-        feat_channels=451,
+        in_channels=515,
+        feat_channels=515,
         use_direction_classifier=True,
         diff_rad_by_sin=True,
         bbox_coder=dict(type='PVGNetBBoxCoder', normalize=False),
@@ -69,7 +83,6 @@ test_cfg = dict(
 dataset_type = 'KittiDataset'
 data_root = 'data/kitti/'
 class_names = ['Car']
-point_cloud_range = [0, -39.68, -3, 69.12, 39.68, 1]
 input_modality = dict(use_lidar=True, use_camera=False)
 db_sampler = dict(
     data_root=data_root,
