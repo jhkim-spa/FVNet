@@ -174,7 +174,7 @@ class PVGAuxHead(nn.Module):
             depth_targets = torch.zeros((height, width, 1),
                                          dtype=torch.float32,
                                          device=device)
-            depth_targets[uv[:, 0], uv[:, 1], 0] = res_points[:, 0]
+            depth_targets[uv[:, 0], uv[:, 1], 0] = res_points[:, 0] / 69.12
 
             seg_targets_list.append(seg_targets)
             depth_targets_list.append(depth_targets)

@@ -4,7 +4,7 @@
 point_cloud_range = [0, -39.68, -3, 69.12, 39.68, 1]
 voxel_size = [0.16, 0.16, 4]
 model = dict(
-    type='PVGNet',
+    type='PVGNetN',
     bev_interp=True,
     voxel_layer=dict(
         max_num_points=32,
