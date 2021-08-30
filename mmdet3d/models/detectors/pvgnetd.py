@@ -58,12 +58,16 @@ class PVGNetD(SingleStage3DDetector):
         if aux_head is not None:
             self.aux_head = build_head(aux_head)
         self.weight_layer = nn.Sequential(
-            nn.Linear(257, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(inplace=True),
-            nn.Linear(64, 1),
+            nn.Linear(256*5 + 1, 5),
             nn.Sigmoid()
         )
+        # self.weight_layer = nn.Sequential(
+        #     nn.Linear(257, 64),
+        #     nn.BatchNorm1d(64),
+        #     nn.ReLU(inplace=True),
+        #     nn.Linear(64, 1),
+        #     nn.Sigmoid()
+        # )
         self.channel_reduct_layer = nn.Sequential(
             nn.Linear(256*5, 256),
             nn.BatchNorm1d(256),
@@ -204,7 +208,7 @@ class PVGNetD(SingleStage3DDetector):
 
         ## scale uv with img feature scale factor
         num_scales = len(img_feats)
-        matched_img_feats = []
+        matched_img_feats_list = []
         for i in range(num_scales):
             scale_factor = img_metas['img_shape'][0] / img_feats[i].shape[1]
             res_uv = uv / scale_factor
@@ -212,13 +216,21 @@ class PVGNetD(SingleStage3DDetector):
 
             res_matched_img_feats = img_feats[i][:, res_uv[:, 0], res_uv[:, 1]].T
             ########### weighting with depth ##################
-            depth = xyz[:, :1][valid_inds]
-            res_img_feats_with_depth = torch.cat([depth, res_matched_img_feats], dim=1)
+            # depth = xyz[:, :1][valid_inds]
+            # res_img_feats_with_depth = torch.cat([depth, res_matched_img_feats], dim=1)
             # mlp
-            weights = self.weight_layer(res_img_feats_with_depth)
-            matched_img_feats.append(res_matched_img_feats * weights)
+            # weights = self.weight_layer(res_img_feats_with_depth)
+            matched_img_feats_list.append(res_matched_img_feats)
         
-        matched_img_feats = torch.cat(matched_img_feats, dim=1)
+        matched_img_feats = torch.cat(matched_img_feats_list, dim=1)
+        depth = xyz[:, :1][valid_inds]
+        matched_img_feats = torch.cat([depth, matched_img_feats], dim=1)
+        weights = self.weight_layer(matched_img_feats)
+
+        matched_img_feats_list = [feats * weight.unsqueeze(dim=-1) for feats, weight\
+            in zip(matched_img_feats_list, weights.T)]
+
+        matched_img_feats = torch.cat(matched_img_feats_list, dim=1)
         matched_img_feats = self.channel_reduct_layer(matched_img_feats)
         fused_feats = torch.cat([lidar_feats, matched_img_feats], dim=1)
 

@@ -59,10 +59,7 @@ class PVGNetN(SingleStage3DDetector):
             self.aux_head = build_head(aux_head)
 
         self.weight_layer = nn.Sequential(
-            nn.Linear(257, 64),
-            nn.BatchNorm1d(64),
-            nn.ReLU(inplace=True),
-            nn.Linear(64, 1),
+            nn.Linear(772, 2),
             nn.Sigmoid()
         )
         self.channel_reduct_layer = nn.Sequential(
@@ -228,11 +225,15 @@ class PVGNetN(SingleStage3DDetector):
         matched_img_feats = torch.cat(matched_img_feats, dim=1)
         matched_img_feats = self.channel_reduct_layer(matched_img_feats)
         num_points = num_points[valid_inds].unsqueeze(dim=-1)
-        matched_img_feats_with_num = torch.cat([num_points, matched_img_feats], dim=1)
-        weights = self.weight_layer(matched_img_feats_with_num)
-        matched_img_feats = weights * matched_img_feats
+        # matched_img_feats_with_num = torch.cat([num_points, matched_img_feats], dim=1)
+        # weights = self.weight_layer(matched_img_feats_with_num)
+        # matched_img_feats = weights * matched_img_feats
         fused_feats = torch.cat([lidar_feats, matched_img_feats], dim=1)
-
+        fused_feats_with_num = torch.cat([num_points, fused_feats], dim=1)
+        weights = self.weight_layer(fused_feats_with_num)
+        fused_feats = torch.cat([lidar_feats[:, :3],
+                                 lidar_feats[:, 3:] * weights[:, 0].reshape(-1, 1),
+                                 matched_img_feats * weights[:, 1].reshape(-1, 1)], dim=1)
         return fused_feats
 
     def extract_img_feats(self, img):
@@ -382,27 +383,27 @@ class PVGNetN(SingleStage3DDetector):
         outs = self.bbox_head(x)
 
         # seg, depth visualize test
-        if self.aux_head is not None:
-            outs_aux = self.aux_head([img_feats[0]])
-            seg_result = outs_aux[0][0]
-            depth_result = outs_aux[1][0]
+        # if self.aux_head is not None:
+        #     outs_aux = self.aux_head([img_feats[0]])
+        #     seg_result = outs_aux[0][0]
+        #     depth_result = outs_aux[1][0]
 
-            import matplotlib.pyplot as plt
-            seg_result = seg_result.sigmoid()
-            seg_result = seg_result.permute(2, 3, 0, 1).reshape(384, 1248, 1)
-            seg_result = seg_result.cpu()
-            plt.imshow(seg_result)
-            plt.savefig('seg.png', dpi=300)
+        #     import matplotlib.pyplot as plt
+        #     seg_result = seg_result.sigmoid()
+        #     seg_result = seg_result.permute(2, 3, 0, 1).reshape(384, 1248, 1)
+        #     seg_result = seg_result.cpu()
+        #     plt.imshow(seg_result)
+        #     plt.savefig('seg.png', dpi=300)
 
-            plt.cla()
-            depth_result = depth_result
-            depth_result = depth_result.permute(2, 3, 0, 1).reshape(384, 1248, 1)
-            depth_result = depth_result.cpu()
-            plt.imshow(depth_result)
-            plt.savefig('depth.png', dpi=300)
+        #     plt.cla()
+        #     depth_result = depth_result
+        #     depth_result = depth_result.permute(2, 3, 0, 1).reshape(384, 1248, 1)
+        #     depth_result = depth_result.cpu()
+        #     plt.imshow(depth_result)
+        #     plt.savefig('depth.png', dpi=300)
 
 
-            print('test')
+        #     print('test')
 
         bbox_list = self.bbox_head.get_bboxes(
             anchor_centers, *outs, img_metas, rescale=rescale,

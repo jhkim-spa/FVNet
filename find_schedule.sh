@@ -1,9 +1,9 @@
-for epoch in 80 160
+for wd in 0.01 0.005 0.001
 do
-	for lr in 0.0005 0.0001 0.001
+	for lr in 0.001 0.0005 0.0001 0.00005
 	do
-		./tools/dist_train.sh configs/pvgnet/pvgnet_kitti-3d-car_voxel_fusion.py 4\
-			--options optimizer.lr=$lr\
-			--work-dir work_dirs/fusion_lr_${lr}_e${epoch}
+		./tools/dist_train.sh configs/pvgnet/fusion.py 4\
+			--options optimizer.lr=$lr optimizer.weight_decay=$wd\
+			--work-dir work_dirs/fusion_lr_${lr}_${wd}_e320
 	done
 done

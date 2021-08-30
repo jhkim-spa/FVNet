@@ -1,6 +1,5 @@
 import torch
 from mmcv.runner import force_fp32
-from torch._C import device
 from torch.nn import functional as F
 
 from mmdet3d.core import bbox3d2result
@@ -17,7 +16,6 @@ import torch.nn as nn
 class PVGNet(SingleStage3DDetector):
 
     def __init__(self,
-                 bev_interp,
                  voxel_layer,
                  voxel_encoder,
                  middle_encoder,
@@ -41,7 +39,6 @@ class PVGNet(SingleStage3DDetector):
             pretrained=pretrained,
         )
         self.point_cloud_range = voxel_layer.point_cloud_range
-        self.bev_interp = bev_interp
         self.voxel_layer = Voxelization(**voxel_layer)
         self.voxel_encoder = build_voxel_encoder(voxel_encoder)
         self.middle_encoder = build_middle_encoder(middle_encoder)
@@ -59,6 +56,17 @@ class PVGNet(SingleStage3DDetector):
         self.aux_head = None
         if aux_head is not None:
             self.aux_head = build_head(aux_head)
+
+        # self.lidar_channel_reduct_layer = nn.Sequential(
+        #     nn.Linear(515, 256),
+        #     nn.BatchNorm1d(256),
+        #     nn.ReLU(inplace=True)
+        # )
+        self.img_channel_reduct_layer = nn.Sequential(
+            nn.Linear(256*5, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(inplace=True)
+        )
 
     @torch.no_grad()
     @force_fp32()
@@ -93,67 +101,6 @@ class PVGNet(SingleStage3DDetector):
 
         return uv
 
-    def fusion(self, lidar_feats, img_feats, img_metas):
-
-        device = lidar_feats.device
-        lidar2img = torch.from_numpy(img_metas['lidar2img'])[:3]
-        width = img_metas['img_shape'][1]
-        height = img_metas['img_shape'][0]
-        xyz = lidar_feats[:, :3].clone()
-
-        ## Back transformation for projection
-        ## scale -> rot -> flip
-        # scale
-        xyz = xyz / img_metas['pcd_scale_factor']
-        # rot
-        if img_metas.get('pcd_rotation') is not None:
-            rotation = img_metas['pcd_rotation'].to(device)
-            xyz = xyz @ torch.inverse(rotation)
-        # flip
-        if img_metas['pcd_horizontal_flip']:
-            xyz[:, 1] *= -1
-        uv = self.project_to_img(xyz, lidar2img)
-
-        ## scale uv with img resize scale factor
-        w_scale, h_scale = img_metas['scale_factor'][:2]
-        uv[:, 0] *= h_scale
-        uv[:, 1] *= w_scale
-
-        # flip uv if image flip is used
-        if img_metas['flip']:
-            uv[:, 1] = width - uv[:, 1] - 1
-
-        ### Visualize anchor centers
-        # import matplotlib.pyplot as plt
-        # img = torch.flip(img.cpu().permute([1, 2, 0]), [0])
-        # plt.imshow(img.cpu().permute([1, 2, 0]))
-        # plt.scatter(uv[:, 1].cpu().detach(),
-        #             height-uv[:, 0].cpu().detach(),
-        #             s=0.1,
-        #             color='red')
-        # plt.xlim(0, width)
-        # plt.ylim(0, height)
-        # plt.savefig('test.png', dpi=300)
-
-        ## fov filter
-        valid_inds = torch.where(
-            (uv[:, 0] < height) & (uv[:, 0] >= 0) &
-            (uv[:, 1] < width)  & (uv[:, 1] >= 0)
-        )[0]
-
-        ## scale uv with img feature scale factor
-        scale_factor = img_metas['img_shape'][0] / img_feats.shape[1]
-        uv /= scale_factor
-
-        uv = uv.to(torch.long)
-        uv = uv[valid_inds] 
-        lidar_feats = lidar_feats[valid_inds]
-
-        matched_img_feats = img_feats[:, uv[:, 0], uv[:, 1]].T
-        fused_feats = torch.cat([lidar_feats, matched_img_feats], dim=1)
-
-        return fused_feats
-
     def fusion_mlvl(self, lidar_feats, img_feats, img_metas):
 
         device = lidar_feats.device
@@ -184,18 +131,6 @@ class PVGNet(SingleStage3DDetector):
         if img_metas['flip']:
             uv[:, 1] = width - uv[:, 1] - 1
 
-        ### Visualize anchor centers
-        # import matplotlib.pyplot as plt
-        # img = torch.flip(img.cpu().permute([1, 2, 0]), [0])
-        # plt.imshow(img.cpu().permute([1, 2, 0]))
-        # plt.scatter(uv[:, 1].cpu().detach(),
-        #             height-uv[:, 0].cpu().detach(),
-        #             s=0.1,
-        #             color='red')
-        # plt.xlim(0, width)
-        # plt.ylim(0, height)
-        # plt.savefig('test.png', dpi=300)
-
         ## fov filter
         valid_inds = torch.where(
             (uv[:, 0] < height) & (uv[:, 0] >= 0) &
@@ -214,7 +149,11 @@ class PVGNet(SingleStage3DDetector):
 
             res_matched_img_feats = img_feats[i][:, res_uv[:, 0], res_uv[:, 1]].T
             matched_img_feats.append(res_matched_img_feats)
-        fused_feats = torch.cat([lidar_feats, sum(matched_img_feats)], dim=1)
+        matched_img_feats = torch.cat(matched_img_feats, dim=1)
+        img_feats = self.img_channel_reduct_layer(matched_img_feats)
+        # lidar_feats = self.lidar_channel_reduct_layer(lidar_feats)
+
+        fused_feats = torch.cat([lidar_feats, img_feats], dim=1)
 
         return fused_feats
 
@@ -227,8 +166,6 @@ class PVGNet(SingleStage3DDetector):
         return img_feats
     
     def extract_lidar_feats(self, points):
-
-        device = points[0].device
         # BEV feats
         voxels, num_points, coors = self.voxelize(points, self.voxel_layer)
         voxel_features = self.voxel_encoder(voxels, num_points, coors)
@@ -244,22 +181,6 @@ class PVGNet(SingleStage3DDetector):
         voxels, num_points, coors = self.voxelize(points_only_xyz, self.voxel_layer2)
         voxel_feats = self.voxel_encoder2(voxels, num_points, coors)
 
-        ## Get anchor centers
-        # method1. grid center
-        # x_range = self.point_cloud_range[3] - self.point_cloud_range[0]
-        # y_range = self.point_cloud_range[4] - self.point_cloud_range[1]
-        # bev_shape = bev_feats.shape[2:]
-        # anchor_size = self.bbox_head.anchor_cfg.size
-        # anchor_grid = coors[:, [2, 3]].to(torch.float32) + 0.5
-        # anchor_centers = torch.zeros((anchor_grid.shape[0], 3),
-        #                               dtype=torch.float32,
-        #                               device=device)
-        # anchor_centers[:, 0] = anchor_grid[:, 1] * x_range / bev_shape[1]
-        # anchor_centers[:, 1] = anchor_grid[:, 0] * y_range / bev_shape[0]\
-        #                         + self.point_cloud_range[1]
-        # lidar_height = 1.7
-        # anchor_centers[:, 2] = -lidar_height + anchor_size[2] / 2
-        # method2. voxel mean
         anchor_centers = voxels.sum(dim=1) / num_points.reshape(-1, 1)
 
         # Concat features
@@ -274,9 +195,6 @@ class PVGNet(SingleStage3DDetector):
         return lidar_feats, coors
 
     def extract_feat(self, points, img_metas, img=None):
-        # TODO: Multi scale image features
-        use_mlvl = True
-
         device = points[0].device
 
         lidar_feats, coors = self.extract_lidar_feats(points)
@@ -288,25 +206,15 @@ class PVGNet(SingleStage3DDetector):
             anchor_centers = torch.cat([coors[:, :1], anchor_centers], dim=1)
             return [lidar_feats], anchor_centers, img_feats
 
-        if use_mlvl:
-            img_feats = self.extract_img_feats(img)
-            batch_size = len(points)
-            fused_feats_list = []
-            num_samples = []
-            for i in range(batch_size):
-                img_feats_batch = [feats[i] for feats in img_feats]
-                feats = self.fusion_mlvl(lidar_feats[i], img_feats_batch, img_metas[i])
-                fused_feats_list.append(feats)
-                num_samples.append(feats.shape[0])
-        else:
-            img_feats = self.extract_img_feats(img)[0]
-            batch_size = len(points)
-            fused_feats_list = []
-            num_samples = []
-            for i in range(batch_size):
-                feats = self.fusion(lidar_feats[i], img_feats[i], img_metas[i])
-                fused_feats_list.append(feats)
-                num_samples.append(feats.shape[0])
+        img_feats = self.extract_img_feats(img)
+        batch_size = len(points)
+        fused_feats_list = []
+        num_samples = []
+        for i in range(batch_size):
+            img_feats_batch = [feats[i] for feats in img_feats]
+            feats = self.fusion_mlvl(lidar_feats[i], img_feats_batch, img_metas[i])
+            fused_feats_list.append(feats)
+            num_samples.append(feats.shape[0])
 
         fused_feats = torch.cat(fused_feats_list)
         batch_idx = [[i] * num for i, num in enumerate(num_samples)]
@@ -332,22 +240,6 @@ class PVGNet(SingleStage3DDetector):
         
         if self.aux_head is not None:
             outs_aux = self.aux_head([img_feats[0]])
-            # seg_result = outs_aux[0][0][0]
-            # depth_result = outs_aux[1][0][0]
-
-            # import matplotlib.pyplot as plt
-            # seg_result = seg_result.sigmoid()
-            # seg_result = seg_result.permute(1, 2, 0).reshape(384, 1248, 1)
-            # seg_result = seg_result.detach().cpu()
-            # plt.imshow(seg_result)
-            # plt.savefig('seg.png', dpi=300)
-
-            # plt.cla()
-            # depth_result = depth_result
-            # depth_result = depth_result.permute(1, 2, 0).reshape(384, 1248, 1)
-            # depth_result = depth_result.detach().cpu()
-            # plt.imshow(depth_result)
-            # plt.savefig('depth.png', dpi=300)
             loss_inputs = outs_aux + (points, gt_bboxes_3d, gt_labels_3d, img_metas)
             losses_aux = self.aux_head.loss(
                 *loss_inputs, gt_bboxes_ignore=gt_bboxes_ignore)
@@ -365,30 +257,6 @@ class PVGNet(SingleStage3DDetector):
 
         x, anchor_centers, img_feats = self.extract_feat(points, img_metas, imgs)
         outs = self.bbox_head(x)
-
-        # seg, depth visualize test
-        if self.aux_head is not None:
-            outs_aux = self.aux_head([img_feats[0]])
-            seg_result = outs_aux[0][0]
-            depth_result = outs_aux[1][0]
-
-            import matplotlib.pyplot as plt
-            seg_result = seg_result.sigmoid()
-            seg_result = seg_result.permute(2, 3, 0, 1).reshape(384, 1248, 1)
-            seg_result = seg_result.cpu()
-            plt.imshow(seg_result)
-            plt.savefig('seg.png', dpi=300)
-
-            plt.cla()
-            depth_result = depth_result
-            depth_result = depth_result.permute(2, 3, 0, 1).reshape(384, 1248, 1)
-            depth_result = depth_result.cpu()
-            plt.imshow(depth_result)
-            plt.savefig('depth.png', dpi=300)
-
-
-            print('test')
-
         bbox_list = self.bbox_head.get_bboxes(
             anchor_centers, *outs, img_metas, rescale=rescale,
             gt_bboxes_3d=gt_bboxes_3d, gt_labels_3d=gt_labels_3d)
