@@ -90,11 +90,22 @@ class PVGHead(nn.Module, AnchorTrainMixin):
 
     def _init_layers(self):
         """Initialize neural network layers of the head."""
+        # self.shared_layer = nn.Sequential(
+        #     nn.Linear(self.in_channels, 512),
+        #     nn.BatchNorm1d(512),
+        #     nn.ReLU(inplace=True),
+        #     nn.Linear(512, 256),
+        #     nn.BatchNorm1d(256),
+        #     nn.ReLU(inplace=True),
+        #     nn.Linear(256, 128),
+        #     nn.BatchNorm1d(128),
+        #     nn.ReLU(inplace=True)
+        # )
         self.shared_layer = nn.Sequential(
-            nn.Linear(self.in_channels, 512),
-            nn.BatchNorm1d(512),
+            nn.Linear(self.in_channels, 256),
+            nn.BatchNorm1d(256),
             nn.ReLU(inplace=True),
-            nn.Linear(512, 256),
+            nn.Linear(256, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(inplace=True),
             nn.Linear(256, 128),

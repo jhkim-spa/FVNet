@@ -57,15 +57,16 @@ class PVGNet(SingleStage3DDetector):
         if aux_head is not None:
             self.aux_head = build_head(aux_head)
 
-        # self.lidar_channel_reduct_layer = nn.Sequential(
-        #     nn.Linear(515, 256),
-        #     nn.BatchNorm1d(256),
-        #     nn.ReLU(inplace=True)
-        # )
-        self.img_channel_reduct_layer = nn.Sequential(
-            nn.Linear(256*5, 256),
-            nn.BatchNorm1d(256),
+        self.lidar_channel_reduct_layer = nn.Sequential(
+            nn.Linear(512, 128),
+            nn.BatchNorm1d(128),
             nn.ReLU(inplace=True)
+        )
+        self.img_channel_reduct_layer = nn.Sequential(
+            nn.Linear(256*5, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5)
         )
 
     @torch.no_grad()
@@ -151,9 +152,10 @@ class PVGNet(SingleStage3DDetector):
             matched_img_feats.append(res_matched_img_feats)
         matched_img_feats = torch.cat(matched_img_feats, dim=1)
         img_feats = self.img_channel_reduct_layer(matched_img_feats)
-        # lidar_feats = self.lidar_channel_reduct_layer(lidar_feats)
+        anchor_centers = lidar_feats[:, :3].clone()
+        lidar_feats = self.lidar_channel_reduct_layer(lidar_feats[:, 3:])
 
-        fused_feats = torch.cat([lidar_feats, img_feats], dim=1)
+        fused_feats = torch.cat([anchor_centers, lidar_feats, img_feats], dim=1)
 
         return fused_feats
 

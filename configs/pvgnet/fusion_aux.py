@@ -5,7 +5,6 @@ point_cloud_range = [0, -39.68, -3, 69.12, 39.68, 1]
 voxel_size = [0.16, 0.16, 4]
 model = dict(
     type='PVGNet',
-    bev_interp=True,
     voxel_layer=dict(
         max_num_points=32,
         point_cloud_range=point_cloud_range,
@@ -51,8 +50,10 @@ model = dict(
         anchor_cfg =dict(size=[1.6, 3.9, 1.56],
                          rotation=[1.57]),
         num_classes=1,
-        in_channels=771,
-        feat_channels=771,
+        # in_channels=771,
+        # feat_channels=771,
+        in_channels=259,
+        feat_channels=259,
         use_direction_classifier=True,
         diff_rad_by_sin=True,
         bbox_coder=dict(type='PVGNetBBoxCoder', normalize=False),
@@ -117,12 +118,12 @@ img_norm_cfg = dict(
 train_pipeline = [
     # RGB pipeline
     dict(type='LoadImageFromFile', to_float32=True),
-    dict(
-        type='PhotoMetricDistortion',
-        brightness_delta=32,
-        contrast_range=(0.5, 1.5),
-        saturation_range=(0.5, 1.5),
-        hue_delta=18),
+    # dict(
+    #     type='PhotoMetricDistortion',
+    #     brightness_delta=32,
+    #     contrast_range=(0.5, 1.5),
+    #     saturation_range=(0.5, 1.5),
+    #     hue_delta=18),
     dict(type='Resize', img_scale=img_size, keep_ratio=False),
     dict(type='Normalize', **img_norm_cfg),
     # LiDAR pipeline
@@ -191,6 +192,7 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'kitti_infos_val.pkl',
+        # ann_file=data_root + 'kitti_infos_train.pkl',
         # ann_file=data_root + 'kitti_infos_debug.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
@@ -202,7 +204,8 @@ data = dict(
     test=dict(
         type=dataset_type,
         data_root=data_root,
-        ann_file=data_root + 'kitti_infos_val.pkl',
+        # ann_file=data_root + 'kitti_infos_val.pkl',
+        ann_file=data_root + 'kitti_infos_train.pkl',
         split='training',
         pts_prefix='velodyne_reduced',
         pipeline=test_pipeline,
